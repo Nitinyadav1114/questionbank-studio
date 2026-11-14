@@ -157,6 +157,43 @@ function hideAuthOverlay() {
     }
 }
 
+let lockoutTimer = null;
+function startLockoutCountdown(totalSeconds) {
+    if (lockoutTimer) clearInterval(lockoutTimer);
+    const submitBtn = document.getElementById('btn-auth-unlock');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+
+    let remaining = totalSeconds;
+    authErrorMsg.classList.remove('hidden');
+
+    const updateMsg = () => {
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        authErrorMsg.textContent = `Too many failed attempts. Locked out for ${timeStr}.`;
+    };
+
+    updateMsg();
+
+    lockoutTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(lockoutTimer);
+            authErrorMsg.classList.add('hidden');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                submitBtn.textContent = 'Unlock Studio';
+            }
+        } else {
+            updateMsg();
+        }
+    }, 1000);
+}
+
 async function handleAuthSubmit(e) {
     e.preventDefault();
     const pass = authPasswordInput.value.trim();
@@ -176,6 +213,11 @@ async function handleAuthSubmit(e) {
 
         if (!res.ok) {
             const err = await res.json();
+            if (res.status === 429) {
+                const retryAfter = parseInt(res.headers.get('Retry-After') || '300');
+                startLockoutCountdown(retryAfter);
+                return;
+            }
             throw new Error(err.detail || 'Incorrect passcode');
         }
 
@@ -187,8 +229,10 @@ async function handleAuthSubmit(e) {
         authErrorMsg.textContent = err.message;
         authErrorMsg.classList.remove('hidden');
     } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Unlock Studio';
+        if (!lockoutTimer) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Unlock Studio';
+        }
     }
 }
 

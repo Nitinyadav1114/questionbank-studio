@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import secrets
 from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Depends, Header
@@ -22,6 +23,12 @@ from backend.models import (
 from backend.services.parser import extract_questions_from_file
 from backend.services.dedup import clean_question_text, normalize_question_text
 from backend.services.exporter import generate_word_document, generate_pdf_document
+from backend.services.security import (
+    auth_rate_limiter,
+    validate_file_magic_bytes,
+    MAX_FILE_SIZE_BYTES,
+    MAX_BATCH_SIZE_BYTES
+)
 
 # Initialize database
 DB_PATH = os.environ.get("DATABASE_URL") or os.environ.get("QUESTION_BANK_DB", "questions.db")
@@ -33,19 +40,24 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 class AuthVerifyRequest(BaseModel):
     password: str
 
+def get_client_ip(request: Request) -> str:
+    """Extracts client IP, checking X-Forwarded-For if behind a reverse proxy (e.g. Render)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
 def verify_auth(request: Request):
     """Enforces master passcode protection if APP_PASSWORD is set."""
     if not APP_PASSWORD:
         return True
     
-    # Check header
     header_pass = request.headers.get("x-app-password")
-    if header_pass == APP_PASSWORD:
+    if header_pass and secrets.compare_digest(header_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")):
         return True
         
-    # Check query param
     query_pass = request.query_params.get("auth_token")
-    if query_pass == APP_PASSWORD:
+    if query_pass and secrets.compare_digest(query_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")):
         return True
         
     raise HTTPException(status_code=401, detail="Authentication required. Please enter master passcode.")
@@ -56,12 +68,44 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for flexibility
+# OWASP Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' https://questionbank-studio.onrender.com;"
+    )
+    return response
+
+# Hardened CORS policy: Only allow own Render domain, custom domains, and local development
+raw_allowed = os.environ.get("ALLOWED_ORIGINS", "")
+allowed_origins = [
+    "https://questionbank-studio.onrender.com",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+if raw_allowed:
+    for o in raw_allowed.split(","):
+        o_clean = o.strip()
+        if o_clean and o_clean not in allowed_origins:
+            allowed_origins.append(o_clean)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -71,20 +115,43 @@ def auth_status(request: Request):
     if not APP_PASSWORD:
         return {"protected": False, "authenticated": True}
     header_pass = request.headers.get("x-app-password")
-    is_auth = (header_pass == APP_PASSWORD)
+    is_auth = bool(header_pass and secrets.compare_digest(header_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")))
     return {"protected": True, "authenticated": is_auth}
 
 @app.post("/api/auth/verify")
-def auth_verify(payload: AuthVerifyRequest):
-    """Verifies master passcode."""
+def auth_verify(request: Request, payload: AuthVerifyRequest):
+    """Verifies master passcode with brute-force rate limiting and timing-attack protection."""
     if not APP_PASSWORD:
         return {"success": True, "message": "No password protection enabled"}
-    if payload.password == APP_PASSWORD:
+
+    client_ip = get_client_ip(request)
+
+    # Check if client IP is currently locked out
+    remaining_lockout = auth_rate_limiter.check_rate_limit(client_ip)
+    if remaining_lockout is not None:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Please wait {remaining_lockout} seconds before trying again.",
+            headers={"Retry-After": str(remaining_lockout)}
+        )
+
+    # Constant-time comparison to prevent timing attacks
+    is_valid = secrets.compare_digest(payload.password.encode("utf-8"), APP_PASSWORD.encode("utf-8"))
+
+    if is_valid:
+        auth_rate_limiter.record_success(client_ip)
         response = JSONResponse({"success": True, "message": "Authenticated successfully"})
-        # Remove any legacy persistent cookie so authentication requires fresh verification per visit
         response.delete_cookie(key="app_auth_token")
         return response
-    raise HTTPException(status_code=401, detail="Incorrect passcode. Please try again.")
+    else:
+        is_locked, lockout_secs = auth_rate_limiter.record_failure(client_ip)
+        if is_locked:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Maximum failed attempts reached. Your IP is locked for {lockout_secs} seconds.",
+                headers={"Retry-After": str(lockout_secs)}
+            )
+        raise HTTPException(status_code=401, detail="Incorrect passcode. Please try again.")
 
 @app.post("/api/upload", response_model=UploadStatsResponse, dependencies=[Depends(verify_auth)])
 async def upload_files(
@@ -94,18 +161,48 @@ async def upload_files(
 ):
     """
     Upload one or more .docx or .pdf files.
-    Extracts serial-numbered questions, performs exact-match deduplication,
-    and updates frequency and source tracking in the library.
+    Enforces 20MB per-file and 50MB batch caps, validates magic-byte headers,
+    extracts questions, and performs exact-match deduplication.
     """
+    total_batch_size = 0
+    validated_files = []
+
+    # First pass: Validate file extensions, sizes, and magic bytes before parsing
+    for file in files:
+        filename = file.filename or "unknown_file"
+        ext = filename.lower()
+        if not (ext.endswith(".docx") or ext.endswith(".pdf")):
+            raise HTTPException(status_code=400, detail=f"File '{filename}' is not a supported format (.docx or .pdf).")
+
+        content = await file.read()
+        file_size = len(content)
+
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{filename}' exceeds maximum allowed size of 20 MB ({file_size / (1024*1024):.1f} MB)."
+            )
+
+        total_batch_size += file_size
+        if total_batch_size > MAX_BATCH_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload batch exceeds maximum allowed size of 50 MB ({total_batch_size / (1024*1024):.1f} MB)."
+            )
+
+        is_valid, err_msg = validate_file_magic_bytes(filename, content)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=err_msg)
+
+        validated_files.append((filename, content))
+
     total_extracted = 0
     total_new = 0
     total_merged = 0
     file_summaries: List[UploadSummary] = []
 
-    for file in files:
-        filename = file.filename or "unknown_file"
+    for filename, content in validated_files:
         try:
-            content = await file.read()
             extracted_questions = extract_questions_from_file(filename, content)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed parsing file '{filename}': {str(e)}")
@@ -302,8 +399,11 @@ def export_backup(request: Request):
 @app.post("/api/restore", dependencies=[Depends(verify_auth)])
 async def import_backup(file: UploadFile = File(...)):
     """Restores/merges questions from an uploaded JSON backup file into the active database."""
+    content = await file.read()
+    if len(content) > MAX_BATCH_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Backup file exceeds maximum allowed size of 50 MB.")
+
     try:
-        content = await file.read()
         data = json.loads(content.decode("utf-8"))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON file: {str(e)}")
@@ -339,6 +439,13 @@ async def upload_custom_template(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Template file must be a .docx Word document.")
 
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Template file exceeds maximum allowed size of 20 MB.")
+
+    is_valid, err_msg = validate_file_magic_bytes(file.filename, content)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err_msg)
+
     with open(TEMPLATE_FILE, "wb") as f:
         f.write(content)
 
