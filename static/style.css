@@ -1,0 +1,41 @@
+/* Custom styles and animations */
+
+/* Smooth custom scrollbars for cart list */
+#cart-items-container::-webkit-scrollbar {
+    width: 6px;
+}
+#cart-items-container::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+#cart-items-container::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+}
+#cart-items-container::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Card hover transitions */
+.question-card {
+    transition: all 0.15s ease-in-out;
+}
+.question-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+}
+
+/* Animation for Cart Pill badge bounce */
+@keyframes bounce-short {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+}
+.animate-cart-bounce {
+    animation: bounce-short 0.3s ease-in-out;
+}
+
+/* Frequency badge pulse for high frequency questions */
+.high-frequency-badge {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    color: #92400e;
+    border: 1px solid #fcd34d;
+}
