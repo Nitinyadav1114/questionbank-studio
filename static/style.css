@@ -39,3 +39,15 @@
     color: #92400e;
     border: 1px solid #fcd34d;
 }
+
+/* Touch Targets: Ensure touch targets are at least 40px on mobile */
+@media (max-width: 640px) {
+    button, input, select, textarea {
+        touch-action: manipulation;
+    }
+    
+    /* Input padding optimization for mobile keyboards */
+    input[type="text"], input[type="password"], select, textarea {
+        font-size: 16px !important; /* Prevents iOS auto-zoom on input focus */
+    }
+}

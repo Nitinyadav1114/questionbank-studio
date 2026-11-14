@@ -94,6 +94,19 @@ const btnBackupLibrary = document.getElementById('btn-backup-library');
 const btnRestoreLibrary = document.getElementById('btn-restore-library');
 const restoreFileInput = document.getElementById('restore-file-input');
 
+// Mobile Utility Drawer Elements
+const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+const mobileMenuDrawer = document.getElementById('mobile-menu-drawer');
+const statTotalMobile = document.getElementById('stat-total-mobile');
+const statMergedMobile = document.getElementById('stat-merged-mobile');
+const btnBackupLibraryMobile = document.getElementById('btn-backup-library-mobile');
+const btnRestoreLibraryMobile = document.getElementById('btn-restore-library-mobile');
+
+// Mobile Collapsible Filters Elements
+const toggleFiltersBtn = document.getElementById('toggle-filters-btn');
+const filtersContainer = document.getElementById('filters-container');
+const activeFiltersBadge = document.getElementById('active-filters-badge');
+
 // Auth Overlay Elements
 const authLockOverlay = document.getElementById('auth-lock-overlay');
 const authForm = document.getElementById('auth-form');
@@ -408,6 +421,49 @@ function setupEventListeners() {
     });
     if (restoreFileInput) restoreFileInput.addEventListener('change', handleRestoreFileSelected);
 
+    // Mobile Navigation Drawer Events
+    if (mobileMenuBtn && mobileMenuDrawer) {
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenuDrawer.classList.toggle('hidden');
+        });
+    }
+    if (btnBackupLibraryMobile) {
+        btnBackupLibraryMobile.addEventListener('click', handleBackupLibrary);
+    }
+    if (btnRestoreLibraryMobile) {
+        btnRestoreLibraryMobile.addEventListener('click', () => {
+            if (restoreFileInput) {
+                restoreFileInput.value = '';
+                restoreFileInput.click();
+            }
+        });
+    }
+
+    // Mobile Collapsible Filters Events
+    if (toggleFiltersBtn && filtersContainer) {
+        toggleFiltersBtn.addEventListener('click', () => {
+            filtersContainer.classList.toggle('hidden');
+        });
+    }
+
+    const updateFiltersBadge = () => {
+        let count = 0;
+        if (filterSubject && filterSubject.value) count++;
+        if (filterTopic && filterTopic.value) count++;
+        if (filterSource && filterSource.value) count++;
+        if (activeFiltersBadge) {
+            if (count > 0) {
+                activeFiltersBadge.textContent = count;
+                activeFiltersBadge.classList.remove('hidden');
+            } else {
+                activeFiltersBadge.classList.add('hidden');
+            }
+        }
+    };
+    filterSubject.addEventListener('change', updateFiltersBadge);
+    filterTopic.addEventListener('change', updateFiltersBadge);
+    filterSource.addEventListener('change', updateFiltersBadge);
+
     // Auth Form Event
     if (authForm) authForm.addEventListener('submit', handleAuthSubmit);
 }
@@ -544,6 +600,8 @@ async function loadMetadata() {
 
         statTotal.textContent = data.total_unique || 0;
         statMerged.textContent = data.merged_duplicates || 0;
+        if (statTotalMobile) statTotalMobile.textContent = data.total_unique || 0;
+        if (statMergedMobile) statMergedMobile.textContent = data.merged_duplicates || 0;
 
         // Populate Subjects
         const currentSub = filterSubject.value;
@@ -686,33 +744,42 @@ function renderQuestions(data) {
                     </div>
                 </div>
 
-                <!-- Action Buttons -->
-                <div class="flex items-center space-x-2 shrink-0 self-end md:self-center">
-                    <button onclick="toggleCartQuestion(${q.id})" class="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                        inCart
-                            ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                            : 'bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-600 hover:text-white'
-                    }">
-                        ${inCart ? '✓ In Cart' : '+ Add to Cart'}
-                    </button>
-                    <button onclick="openEditModal(${q.id})" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer" title="Edit Question">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                    </button>
-                    <button onclick="deleteQuestion(${q.id})" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer" title="Delete Question">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                    </button>
-
-                    <!-- Quick Download Word / PDF options on Question Card -->
-                    <div class="flex items-center space-x-1 border-l border-slate-200 pl-2">
-                        <button onclick="downloadSingleQuestion(${q.id}, 'docx')" class="px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-brand-600 hover:bg-brand-50 transition-colors flex items-center space-x-1 cursor-pointer" title="Download this question as Word (.docx)">
-                            <span>📄 Word</span>
+                <!-- Action Buttons: Responsive 2-Tier on Mobile, Single Row on Desktop -->
+                <div class="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                    <!-- Primary Actions (Add to Cart & Quick Exports) -->
+                    <div class="flex items-center space-x-2 w-full sm:w-auto">
+                        <button onclick="toggleCartQuestion(${q.id})" class="flex-1 sm:flex-none inline-flex items-center justify-center space-x-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition-all min-h-[38px] sm:min-h-0 cursor-pointer ${
+                            inCart
+                                ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                                : 'bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-600 hover:text-white'
+                        }">
+                            ${inCart ? '✓ In Cart' : '+ Add to Cart'}
                         </button>
-                        <button onclick="downloadSingleQuestion(${q.id}, 'pdf')" class="px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 transition-colors flex items-center space-x-1 cursor-pointer" title="Download this question as PDF (.pdf)">
-                            <span>📕 PDF</span>
+                        
+                        <!-- Quick Download Word / PDF options on Question Card -->
+                        <div class="flex items-center space-x-1 border-l border-slate-200 pl-2">
+                            <button onclick="downloadSingleQuestion(${q.id}, 'docx')" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-brand-600 hover:bg-brand-50 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Download this question as Word (.docx)">
+                                <span>📄 Word</span>
+                            </button>
+                            <button onclick="downloadSingleQuestion(${q.id}, 'pdf')" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Download this question as PDF (.pdf)">
+                                <span>📕 PDF</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Secondary Actions (Edit & Delete) -->
+                    <div class="flex items-center justify-end space-x-2 sm:space-x-1 sm:border-l sm:border-slate-200 sm:pl-2">
+                        <button onclick="openEditModal(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer text-xs sm:text-inherit" title="Edit Question">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                            <span class="sm:hidden font-medium">Edit</span>
+                        </button>
+                        <button onclick="deleteQuestion(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer text-xs sm:text-inherit" title="Delete Question">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            <span class="sm:hidden font-medium">Delete</span>
                         </button>
                     </div>
                 </div>
@@ -967,15 +1034,15 @@ function renderCartDrawer() {
                 </p>
             </div>
 
-            <!-- Controls: Move Up, Move Down, Remove -->
+            <!-- Controls: Move Up, Move Down, Remove with comfortable touch targets -->
             <div class="flex items-center space-x-1 shrink-0">
-                <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="p-1 rounded text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:hover:text-slate-400" title="Move Up">
+                <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Up">
                     ▲
                 </button>
-                <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="p-1 rounded text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:hover:text-slate-400" title="Move Down">
+                <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Down">
                     ▼
                 </button>
-                <button onclick="removeFromCart(${index})" class="p-1 rounded text-slate-400 hover:text-rose-600 font-bold ml-1 cursor-pointer" title="Remove">
+                <button onclick="removeFromCart(${index})" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 font-bold ml-0.5 cursor-pointer" title="Remove">
                     ✕
                 </button>
             </div>
