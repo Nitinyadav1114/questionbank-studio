@@ -393,34 +393,66 @@ class Database:
         skipped = 0
         from backend.services.dedup import clean_question_text, normalize_question_text
 
-        for q in questions_data:
-            q_text = q.get("question_text", "")
-            cleaned = clean_question_text(q_text)
-            if not cleaned:
-                skipped += 1
-                continue
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            for q in questions_data:
+                q_text = q.get("question_text", "")
+                cleaned = clean_question_text(q_text)
+                if not cleaned:
+                    skipped += 1
+                    continue
 
-            norm_text = q.get("normalized_text") or normalize_question_text(cleaned)
-            if not norm_text:
-                skipped += 1
-                continue
+                norm_text = q.get("normalized_text") or normalize_question_text(cleaned)
+                if not norm_text:
+                    skipped += 1
+                    continue
 
-            subject = q.get("subject", "").strip() if q.get("subject") else ""
-            topic = q.get("topic", "").strip() if q.get("topic") else ""
-            sources = q.get("sources", [])
-            source_name = sources[0] if isinstance(sources, list) and sources else "Backup Import"
+                subject = q.get("subject", "").strip() if q.get("subject") else ""
+                topic = q.get("topic", "").strip() if q.get("topic") else ""
+                sources = q.get("sources", [])
+                source_name = sources[0] if isinstance(sources, list) and sources else "Backup Import"
 
-            qid, is_merged = self.upsert_question(
-                question_text=cleaned,
-                normalized_text=norm_text,
-                subject=subject,
-                topic=topic,
-                source_filename=source_name
-            )
-            if is_merged:
-                merged += 1
-            else:
-                restored += 1
+                query = self._format_query(
+                    "SELECT id, frequency, sources, subject, topic FROM questions WHERE normalized_text = ?"
+                )
+                cursor.execute(query, (norm_text,))
+                row = cursor.fetchone()
+
+                if row:
+                    question_id = row["id"]
+                    current_freq = row["frequency"] or 1
+                    try:
+                        sources_list = json.loads(row["sources"]) if row["sources"] else []
+                    except Exception:
+                        sources_list = []
+
+                    if source_name and source_name not in sources_list:
+                        sources_list.append(source_name)
+
+                    new_subject = row["subject"] if row["subject"] else subject
+                    new_topic = row["topic"] if row["topic"] else topic
+
+                    update_query = self._format_query("""
+                        UPDATE questions
+                        SET frequency = ?,
+                            sources = ?,
+                            subject = ?,
+                            topic = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """)
+                    cursor.execute(update_query, (current_freq + 1, json.dumps(sources_list), new_subject, new_topic, question_id))
+                    merged += 1
+                else:
+                    sources_list = [source_name] if source_name else []
+                    insert_query = self._format_query("""
+                        INSERT INTO questions (question_text, normalized_text, subject, topic, frequency, sources)
+                        VALUES (?, ?, ?, ?, 1, ?)
+                    """)
+                    cursor.execute(insert_query, (cleaned, norm_text, subject, topic, json.dumps(sources_list)))
+                    restored += 1
+
+            conn.commit()
 
         return {
             "restored": restored,
