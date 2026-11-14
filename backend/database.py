@@ -22,7 +22,10 @@ class Database:
                 raise RuntimeError("psycopg2 is required for PostgreSQL connections. Run 'pip install psycopg2-binary'.")
             self.is_postgres = True
             # Cloud providers like Render sometimes provide postgres:// which psycopg2 prefers as postgresql://
-            self.db_url = re.sub(r"^postgres://", "postgresql://", target)
+            url = re.sub(r"^postgres://", "postgresql://", target)
+            # Normalize Neon pooler hostname to direct hostname if present to guarantee DNS resolution
+            url = re.sub(r"-pooler\.", ".", url)
+            self.db_url = url
             self.db_path = None
         else:
             self.is_postgres = False
