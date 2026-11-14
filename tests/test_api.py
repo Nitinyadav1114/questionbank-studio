@@ -215,10 +215,10 @@ def test_passcode_auth(client_with_temp_db):
         wrong_resp = client.post("/api/auth/verify", json={"password": "wrong"})
         assert wrong_resp.status_code == 401
 
-        # Login with correct password -> 200 and sets cookie
+        # Login with correct password -> 200
         correct_resp = client.post("/api/auth/verify", json={"password": "secret_password_123"})
         assert correct_resp.status_code == 200
-        assert "app_auth_token" in correct_resp.cookies
+        assert correct_resp.json()["success"] is True
 
         # Now request with header works
         auth_header_resp = client.post(

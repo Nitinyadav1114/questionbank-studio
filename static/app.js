@@ -100,17 +100,22 @@ const authForm = document.getElementById('auth-form');
 const authPasswordInput = document.getElementById('auth-password-input');
 const authErrorMsg = document.getElementById('auth-error-msg');
 
+// Auth Token is strictly in-memory per page session - resets on every reload/visit
+let inMemoryAuthToken = '';
+
+// Clear any legacy stored tokens so every reload requires entering passcode
+sessionStorage.removeItem('app_auth_token');
+localStorage.removeItem('app_auth_token');
+
 function getAuthHeaders(existingHeaders = {}) {
-    const token = sessionStorage.getItem('app_auth_token') || '';
-    if (token) {
-        return { ...existingHeaders, 'X-App-Password': token };
+    if (inMemoryAuthToken) {
+        return { ...existingHeaders, 'X-App-Password': inMemoryAuthToken };
     }
     return existingHeaders;
 }
 
 async function apiFetch(url, options = {}) {
     options.headers = getAuthHeaders(options.headers || {});
-    options.credentials = 'include';
     const res = await fetch(url, options);
     if (res.status === 401) {
         showAuthOverlay();
@@ -121,8 +126,7 @@ async function apiFetch(url, options = {}) {
 async function checkAuthStatus() {
     try {
         const res = await fetch('/api/auth/status', {
-            headers: getAuthHeaders(),
-            credentials: 'include'
+            headers: getAuthHeaders()
         });
         if (res.ok) {
             const data = await res.json();
@@ -167,8 +171,7 @@ async function handleAuthSubmit(e) {
         const res = await fetch('/api/auth/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pass }),
-            credentials: 'include'
+            body: JSON.stringify({ password: pass })
         });
 
         if (!res.ok) {
@@ -176,7 +179,7 @@ async function handleAuthSubmit(e) {
             throw new Error(err.detail || 'Incorrect passcode');
         }
 
-        sessionStorage.setItem('app_auth_token', pass);
+        inMemoryAuthToken = pass;
         hideAuthOverlay();
         await loadMetadata();
         await loadQuestions();
@@ -191,8 +194,7 @@ async function handleAuthSubmit(e) {
 
 async function handleBackupLibrary() {
     try {
-        const token = sessionStorage.getItem('app_auth_token') || '';
-        const url = token ? `/api/backup?auth_token=${encodeURIComponent(token)}` : '/api/backup';
+        const url = inMemoryAuthToken ? `/api/backup?auth_token=${encodeURIComponent(inMemoryAuthToken)}` : '/api/backup';
         window.location.href = url;
     } catch (e) {
         alert("Failed to download backup: " + e.message);

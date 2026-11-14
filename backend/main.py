@@ -48,11 +48,6 @@ def verify_auth(request: Request):
     if query_pass == APP_PASSWORD:
         return True
         
-    # Check cookie
-    cookie_pass = request.cookies.get("app_auth_token")
-    if cookie_pass == APP_PASSWORD:
-        return True
-        
     raise HTTPException(status_code=401, detail="Authentication required. Please enter master passcode.")
 
 app = FastAPI(
@@ -72,22 +67,22 @@ app.add_middleware(
 
 @app.get("/api/auth/status")
 def auth_status(request: Request):
-    """Returns whether the app has password protection enabled and whether current client is authenticated."""
+    """Returns whether the app has password protection enabled."""
     if not APP_PASSWORD:
         return {"protected": False, "authenticated": True}
     header_pass = request.headers.get("x-app-password")
-    cookie_pass = request.cookies.get("app_auth_token")
-    is_auth = (header_pass == APP_PASSWORD or cookie_pass == APP_PASSWORD)
+    is_auth = (header_pass == APP_PASSWORD)
     return {"protected": True, "authenticated": is_auth}
 
 @app.post("/api/auth/verify")
 def auth_verify(payload: AuthVerifyRequest):
-    """Verifies master passcode and sets an authentication cookie."""
+    """Verifies master passcode."""
     if not APP_PASSWORD:
         return {"success": True, "message": "No password protection enabled"}
     if payload.password == APP_PASSWORD:
         response = JSONResponse({"success": True, "message": "Authenticated successfully"})
-        response.set_cookie(key="app_auth_token", value=APP_PASSWORD, httponly=False, samesite="lax", max_age=86400 * 30)
+        # Remove any legacy persistent cookie so authentication requires fresh verification per visit
+        response.delete_cookie(key="app_auth_token")
         return response
     raise HTTPException(status_code=401, detail="Incorrect passcode. Please try again.")
 
