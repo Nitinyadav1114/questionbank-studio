@@ -107,7 +107,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# OWASP Security Headers Middleware
+# OWASP Security Headers Middleware & Cache Control
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -123,6 +123,12 @@ async def add_security_headers(request: Request, call_next):
         "img-src 'self' data: blob:; "
         "connect-src 'self' https://questionbank-studio.onrender.com;"
     )
+    # Ensure browsers never serve stale cached JavaScript or HTML
+    path = request.url.path
+    if path == "/" or path.endswith(".js") or path.endswith(".css") or path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
 
 # Hardened CORS policy: Only allow own Render domain, custom domains, and local development
@@ -686,5 +692,9 @@ if os.path.exists(STATIC_DIR):
 def serve_index():
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        response = FileResponse(index_path)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     return {"message": "Question Bank API is running. Static UI not found."}

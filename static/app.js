@@ -257,6 +257,7 @@ function clearSession() {
 function showAuthOverlay(customMessage = '') {
     if (authLockOverlay) {
         authLockOverlay.classList.remove('hidden');
+        if (authPasswordInput) authPasswordInput.value = '';
         if (authErrorMsg) {
             if (customMessage) {
                 authErrorMsg.textContent = customMessage;
@@ -276,6 +277,40 @@ function hideAuthOverlay() {
         authLockOverlay.classList.add('hidden');
     }
 }
+
+// Global window functions for direct inline click handlers
+window.toggleUserDropdown = function(e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    const menu = document.getElementById('user-dropdown-menu');
+    if (menu) {
+        menu.classList.toggle('hidden');
+    }
+};
+
+window.openUserMgmtModal = function(e) {
+    if (e) e.stopPropagation();
+    openUserMgmtModal();
+};
+
+window.closeUserMgmtModal = function() {
+    closeUserMgmtModal();
+};
+
+window.openChangePasswordModal = function(e) {
+    if (e) e.stopPropagation();
+    openChangePasswordModal();
+};
+
+window.closeChangePasswordModal = function() {
+    closeChangePasswordModal();
+};
+
+window.performLogout = function(askConfirm = true) {
+    performLogout(askConfirm);
+};
 
 let lockoutTimer = null;
 function startLockoutCountdown(totalSeconds) {
@@ -344,7 +379,8 @@ async function handleAuthSubmit(e) {
                 startLockoutCountdown(retryAfter);
                 return;
             }
-            throw new Error(err.detail || 'Invalid username or password');
+            clearSession();
+            throw new Error(err.detail || 'Invalid username or password.');
         }
 
         const data = await res.json();
@@ -359,8 +395,9 @@ async function handleAuthSubmit(e) {
         await loadMetadata();
         await loadQuestions();
     } catch (err) {
+        clearSession();
         if (authErrorMsg) {
-            authErrorMsg.textContent = err.message;
+            authErrorMsg.textContent = err.message || 'Invalid username or password.';
             authErrorMsg.classList.remove('hidden');
         }
     } finally {
