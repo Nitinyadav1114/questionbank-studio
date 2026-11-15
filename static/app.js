@@ -1088,10 +1088,8 @@ async function loadMetadata() {
         if (!res.ok) return;
         const data = await res.json();
 
-        statTotal.textContent = data.total_unique || 0;
-        statMerged.textContent = data.merged_duplicates || 0;
-        if (statTotalMobile) statTotalMobile.textContent = data.total_unique || 0;
-        if (statMergedMobile) statMergedMobile.textContent = data.merged_duplicates || 0;
+        if (statTotal) statTotal.textContent = data.total_unique || 0;
+        if (statMerged) statMerged.textContent = data.merged_duplicates || 0;
 
         // Populate Subjects
         const currentSub = filterSubject.value;
