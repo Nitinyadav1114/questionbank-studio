@@ -1,4 +1,4 @@
-// QuestionBank Studio - Frontend Application Logic
+// Squire Way - Question Bank Frontend Application Logic
 
 // Application State
 const state = {
@@ -417,7 +417,7 @@ async function handleAuthSubmit(e) {
 }
 
 async function performLogout(askConfirm = true) {
-    if (askConfirm && !confirm("Are you sure you want to log out of QuestionBank Studio?")) return;
+    if (askConfirm && !confirm("Are you sure you want to log out of Squire Way Question Bank?")) return;
     const token = sessionStorage.getItem('qb_token');
     if (token) {
         try {
