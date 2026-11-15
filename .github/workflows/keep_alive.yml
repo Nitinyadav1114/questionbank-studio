@@ -1,0 +1,26 @@
+name: Render Keep-Alive Ping ⏱️
+
+on:
+  schedule:
+    # Runs every 14 minutes between 02:00 UTC and 18:00 UTC (7:30 AM to 11:30 PM IST)
+    # Covers all active school and study hours (16 hrs/day = ~480 hrs/month)
+    # Staying safely within Render's 750 free instance hours per month limit.
+    - cron: '*/14 2-18 * * *'
+  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
+
+jobs:
+  keep-alive:
+    name: Ping Squire Way Health Endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Server
+        run: |
+          echo "Pinging https://squire-way-app.onrender.com/healthz..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://squire-way-app.onrender.com/healthz)
+          echo "HTTP Response: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Server is alive and responsive!"
+          else
+            echo "⚠️ Server returned status code $HTTP_STATUS"
+            exit 1
+          fi
