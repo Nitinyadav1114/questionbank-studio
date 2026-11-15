@@ -82,6 +82,19 @@ class Database:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) UNIQUE NOT NULL,
+                    display_name VARCHAR(150) NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    salt VARCHAR(64) NOT NULL,
+                    role VARCHAR(20) NOT NULL DEFAULT 'teacher',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
             else:
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS questions (
@@ -96,10 +109,24 @@ class Database:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username VARCHAR(100) UNIQUE NOT NULL,
+                    display_name VARCHAR(150) NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    salt VARCHAR(64) NOT NULL,
+                    role VARCHAR(20) NOT NULL DEFAULT 'teacher',
+                    is_active BOOLEAN NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
             
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_normalized ON questions(normalized_text);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);")
             conn.commit()
 
     def upsert_question(
@@ -463,3 +490,139 @@ class Database:
             "skipped": skipped,
             "total": len(questions_data)
         }
+
+    # ================= User Management Methods =================
+
+    def create_user(
+        self,
+        username: str,
+        display_name: str,
+        password_hash: str,
+        salt: str,
+        role: str = "teacher"
+    ) -> int:
+        """Creates a new user record. Returns the new user ID."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            clean_username = username.strip().lower()
+            clean_name = display_name.strip() or clean_username
+            clean_role = role.strip().lower() if role.strip().lower() in ("admin", "teacher") else "teacher"
+
+            if self.is_postgres:
+                query = """
+                    INSERT INTO users (username, display_name, password_hash, salt, role, is_active)
+                    VALUES (%s, %s, %s, %s, %s, TRUE)
+                    RETURNING id
+                """
+                cursor.execute(query, (clean_username, clean_name, password_hash, salt, clean_role))
+                user_id = cursor.fetchone()[0]
+            else:
+                query = """
+                    INSERT INTO users (username, display_name, password_hash, salt, role, is_active)
+                    VALUES (?, ?, ?, ?, ?, 1)
+                """
+                cursor.execute(query, (clean_username, clean_name, password_hash, salt, clean_role))
+                user_id = cursor.lastrowid
+
+            conn.commit()
+            return user_id
+
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a user by username (case-insensitive)."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            query = self._format_query("""
+                SELECT id, username, display_name, password_hash, salt, role, is_active, created_at, updated_at
+                FROM users
+                WHERE LOWER(username) = LOWER(?)
+            """)
+            cursor.execute(query, (username.strip(),))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "display_name": row["display_name"],
+                "password_hash": row["password_hash"],
+                "salt": row["salt"],
+                "role": row["role"],
+                "is_active": bool(row["is_active"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"])
+            }
+
+    def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieves a user by ID."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            query = self._format_query("""
+                SELECT id, username, display_name, password_hash, salt, role, is_active, created_at, updated_at
+                FROM users
+                WHERE id = ?
+            """)
+            cursor.execute(query, (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "display_name": row["display_name"],
+                "password_hash": row["password_hash"],
+                "salt": row["salt"],
+                "role": row["role"],
+                "is_active": bool(row["is_active"]),
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"])
+            }
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        """Lists all registered users (excluding sensitive password hashes)."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            query = "SELECT id, username, display_name, role, is_active, created_at, updated_at FROM users ORDER BY id ASC"
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return [
+                {
+                    "id": r["id"],
+                    "username": r["username"],
+                    "display_name": r["display_name"],
+                    "role": r["role"],
+                    "is_active": bool(r["is_active"]),
+                    "created_at": str(r["created_at"]),
+                    "updated_at": str(r["updated_at"])
+                }
+                for r in rows
+            ]
+
+    def update_user_password(self, user_id: int, password_hash: str, salt: str) -> bool:
+        """Updates user password hash and salt."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            query = self._format_query("""
+                UPDATE users
+                SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """)
+            cursor.execute(query, (password_hash, salt, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_user(self, user_id: int) -> bool:
+        """Deletes a user by ID."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            query = self._format_query("DELETE FROM users WHERE id = ?")
+            cursor.execute(query, (user_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def count_users(self) -> int:
+        """Returns the total number of users."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute("SELECT COUNT(*) FROM users")
+            res = cursor.fetchone()
+            return res[0] if res else 0

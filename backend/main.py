@@ -18,23 +18,34 @@ from backend.models import (
     BulkDeleteRequest,
     ExportRequest,
     UploadSummary,
-    UploadStatsResponse
+    UploadStatsResponse,
+    UserResponse,
+    UserLogin,
+    TokenResponse,
+    UserCreate,
+    ChangePasswordRequest,
+    ResetPasswordRequest
 )
 from backend.services.parser import extract_questions_from_file
 from backend.services.dedup import clean_question_text, normalize_question_text
 from backend.services.exporter import generate_word_document, generate_pdf_document
 from backend.services.security import (
     auth_rate_limiter,
+    session_manager,
+    hash_password,
+    verify_password,
+    ensure_admin_user,
     validate_file_magic_bytes,
     MAX_FILE_SIZE_BYTES,
     MAX_BATCH_SIZE_BYTES
 )
 
-# Initialize database
+# Initialize database and default admin account
 DB_PATH = os.environ.get("DATABASE_URL") or os.environ.get("QUESTION_BANK_DB", "questions.db")
 db = Database(DB_PATH)
+ensure_admin_user(db)
 
-# Authentication settings
+# Legacy master passcode setting (kept for optional backward-compatibility)
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 
 class AuthVerifyRequest(BaseModel):
@@ -47,20 +58,48 @@ def get_client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "127.0.0.1"
 
-def verify_auth(request: Request):
-    """Enforces master passcode protection if APP_PASSWORD is set."""
+def get_current_user(request: Request) -> dict:
+    """
+    Validates session token from Authorization: Bearer <token>, x-auth-token header,
+    or auth_token query parameter. Falls back to APP_PASSWORD if provided.
+    If APP_PASSWORD is empty (local dev/unprotected test mode), defaults to admin.
+    """
     if not APP_PASSWORD:
-        return True
-    
+        return {"user_id": 1, "username": "admin", "display_name": "Administrator", "role": "admin"}
+
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.headers.get("x-auth-token")
+    if not token:
+        token = request.query_params.get("auth_token")
+
+    if token:
+        session = session_manager.get_session(token)
+        if session:
+            return session
+
+    # Fallback / backward compatibility for legacy master passcode or tests
     header_pass = request.headers.get("x-app-password")
     if header_pass and secrets.compare_digest(header_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")):
-        return True
-        
-    query_pass = request.query_params.get("auth_token")
-    if query_pass and secrets.compare_digest(query_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")):
-        return True
-        
-    raise HTTPException(status_code=401, detail="Authentication required. Please enter master passcode.")
+        return {"user_id": 1, "username": "admin", "display_name": "Administrator", "role": "admin"}
+
+    if token and secrets.compare_digest(token.encode("utf-8"), APP_PASSWORD.encode("utf-8")):
+        return {"user_id": 1, "username": "admin", "display_name": "Administrator", "role": "admin"}
+
+    raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Enforces that the current authenticated user has the 'admin' role."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden: Admin privileges required.")
+    return current_user
+
+def verify_auth(request: Request):
+    """Legacy alias: ensures caller is an authenticated user."""
+    return get_current_user(request)
 
 app = FastAPI(
     title="Question Bank Manager",
@@ -111,19 +150,38 @@ app.add_middleware(
 
 @app.get("/api/auth/status")
 def auth_status(request: Request):
-    """Returns whether the app has password protection enabled."""
+    """Returns whether authentication protection is active and if client is authenticated."""
     if not APP_PASSWORD:
-        return {"protected": False, "authenticated": True}
+        return {"protected": False, "authenticated": True, "user": {"username": "admin", "role": "admin"}}
+
+    # Check session token
+    auth_header = request.headers.get("Authorization")
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.headers.get("x-auth-token")
+    if not token:
+        token = request.query_params.get("auth_token")
+
+    if token:
+        session = session_manager.get_session(token)
+        if session:
+            return {"protected": True, "authenticated": True, "user": session}
+
     header_pass = request.headers.get("x-app-password")
-    is_auth = bool(header_pass and secrets.compare_digest(header_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")))
-    return {"protected": True, "authenticated": is_auth}
+    is_legacy = bool(header_pass and secrets.compare_digest(header_pass.encode("utf-8"), APP_PASSWORD.encode("utf-8")))
+    if is_legacy:
+        return {"protected": True, "authenticated": True, "user": {"username": "admin", "role": "admin"}}
 
-@app.post("/api/auth/verify")
-def auth_verify(request: Request, payload: AuthVerifyRequest):
-    """Verifies master passcode with brute-force rate limiting and timing-attack protection."""
-    if not APP_PASSWORD:
-        return {"success": True, "message": "No password protection enabled"}
+    return {"protected": True, "authenticated": False, "user": None}
 
+@app.post("/api/auth/login", response_model=TokenResponse)
+def auth_login(request: Request, payload: UserLogin):
+    """
+    Authenticates a user with username and password, protected by sliding-window rate limiting.
+    Issues a high-entropy session token upon success.
+    """
     client_ip = get_client_ip(request)
 
     # Check if client IP is currently locked out
@@ -135,14 +193,180 @@ def auth_verify(request: Request, payload: AuthVerifyRequest):
             headers={"Retry-After": str(remaining_lockout)}
         )
 
-    # Constant-time comparison to prevent timing attacks
-    is_valid = secrets.compare_digest(payload.password.encode("utf-8"), APP_PASSWORD.encode("utf-8"))
+    username_clean = payload.username.strip().lower()
+    user = db.get_user_by_username(username_clean)
+
+    # Check credentials
+    is_valid = False
+    if user and user.get("is_active"):
+        is_valid = verify_password(payload.password, user["password_hash"], user["salt"])
+    elif username_clean == "admin" and APP_PASSWORD:
+        # Fallback for admin using APP_PASSWORD if set
+        is_valid = secrets.compare_digest(payload.password.encode("utf-8"), APP_PASSWORD.encode("utf-8"))
+        if is_valid:
+            user = {
+                "id": 1,
+                "username": "admin",
+                "display_name": "Administrator",
+                "role": "admin",
+                "is_active": True,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+
+    if not is_valid or not user:
+        is_locked, lockout_secs = auth_rate_limiter.record_failure(client_ip)
+        if is_locked:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Maximum failed attempts reached. Your IP is locked for {lockout_secs} seconds.",
+                headers={"Retry-After": str(lockout_secs)}
+            )
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    # Successful login
+    auth_rate_limiter.record_success(client_ip)
+    token = session_manager.create_session(user)
+    return TokenResponse(
+        token=token,
+        user=UserResponse(
+            id=user["id"],
+            username=user["username"],
+            display_name=user["display_name"],
+            role=user["role"],
+            is_active=user["is_active"],
+            created_at=str(user["created_at"]),
+            updated_at=str(user["updated_at"])
+        )
+    )
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    """Invalidates the caller's session token."""
+    auth_header = request.headers.get("Authorization")
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.headers.get("x-auth-token")
+    if token:
+        session_manager.destroy_session(token)
+    return {"success": True, "message": "Logged out successfully"}
+
+@app.get("/api/auth/me")
+def auth_me(current_user: dict = Depends(get_current_user)):
+    """Returns currently authenticated user profile."""
+    return {"user": current_user}
+
+@app.post("/api/auth/change-password")
+def auth_change_password(payload: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    """Allows any logged-in user to change their own password."""
+    user = db.get_user_by_id(current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    if not verify_password(payload.old_password, user["password_hash"], user["salt"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+    new_hash, new_salt = hash_password(payload.new_password)
+    db.update_user_password(user["id"], new_hash, new_salt)
+    return {"success": True, "message": "Password changed successfully."}
+
+# ================= Admin User Management Endpoints =================
+
+@app.get("/api/admin/users", response_model=List[UserResponse])
+def admin_list_users(admin: dict = Depends(require_admin)):
+    """Lists all registered users in the system (Admin only)."""
+    users = db.list_users()
+    return [
+        UserResponse(
+            id=u["id"],
+            username=u["username"],
+            display_name=u["display_name"],
+            role=u["role"],
+            is_active=u["is_active"],
+            created_at=str(u["created_at"]),
+            updated_at=str(u["updated_at"])
+        )
+        for u in users
+    ]
+
+@app.post("/api/admin/users", response_model=UserResponse)
+def admin_create_user(payload: UserCreate, admin: dict = Depends(require_admin)):
+    """Creates a new user account (Admin only)."""
+    clean_username = payload.username.strip().lower()
+    existing = db.get_user_by_username(clean_username)
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Username '{clean_username}' already exists.")
+
+    pwd_hash, salt = hash_password(payload.password)
+    user_id = db.create_user(
+        username=clean_username,
+        display_name=payload.display_name.strip() or clean_username,
+        password_hash=pwd_hash,
+        salt=salt,
+        role=payload.role or "teacher"
+    )
+    user = db.get_user_by_id(user_id)
+    return UserResponse(
+        id=user["id"],
+        username=user["username"],
+        display_name=user["display_name"],
+        role=user["role"],
+        is_active=user["is_active"],
+        created_at=str(user["created_at"]),
+        updated_at=str(user["updated_at"])
+    )
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+def admin_reset_user_password(user_id: int, payload: ResetPasswordRequest, admin: dict = Depends(require_admin)):
+    """Resets a user's password (Admin only)."""
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    pwd_hash, salt = hash_password(payload.new_password)
+    db.update_user_password(user_id, pwd_hash, salt)
+    return {"success": True, "message": f"Password reset successfully for user '{user['username']}'."}
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: int, admin: dict = Depends(require_admin)):
+    """Deletes a user account (Admin only; cannot delete own account)."""
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own active administrator account.")
+
+    user = db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    db.delete_user(user_id)
+    return {"success": True, "message": f"User '{user['username']}' deleted successfully."}
+
+@app.post("/api/auth/verify")
+def auth_verify(request: Request, payload: AuthVerifyRequest):
+    """Legacy endpoint: verifies master passcode or admin password for backward compatibility."""
+    client_ip = get_client_ip(request)
+    remaining_lockout = auth_rate_limiter.check_rate_limit(client_ip)
+    if remaining_lockout is not None:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Please wait {remaining_lockout} seconds before trying again.",
+            headers={"Retry-After": str(remaining_lockout)}
+        )
+
+    # Check APP_PASSWORD or admin user password
+    is_valid = False
+    if APP_PASSWORD:
+        is_valid = secrets.compare_digest(payload.password.encode("utf-8"), APP_PASSWORD.encode("utf-8"))
+    
+    if not is_valid:
+        admin_user = db.get_user_by_username("admin")
+        if admin_user:
+            is_valid = verify_password(payload.password, admin_user["password_hash"], admin_user["salt"])
 
     if is_valid:
         auth_rate_limiter.record_success(client_ip)
-        response = JSONResponse({"success": True, "message": "Authenticated successfully"})
-        response.delete_cookie(key="app_auth_token")
-        return response
+        return {"success": True, "message": "Authenticated successfully"}
     else:
         is_locked, lockout_secs = auth_rate_limiter.record_failure(client_ip)
         if is_locked:
@@ -323,17 +547,17 @@ def update_question(question_id: int, payload: QuestionUpdate):
         raise HTTPException(status_code=404, detail="Question not found")
     return {"message": "Question updated successfully"}
 
-@app.delete("/api/questions/{question_id}", dependencies=[Depends(verify_auth)])
+@app.delete("/api/questions/{question_id}", dependencies=[Depends(require_admin)])
 def delete_question(question_id: int):
-    """Deletes a question from the library."""
+    """Deletes a question from the library (Admin only)."""
     success = db.delete_question(question_id)
     if not success:
         raise HTTPException(status_code=404, detail="Question not found")
     return {"message": "Question deleted successfully"}
 
-@app.post("/api/questions/bulk-delete", dependencies=[Depends(verify_auth)])
+@app.post("/api/questions/bulk-delete", dependencies=[Depends(require_admin)])
 def bulk_delete_questions(payload: BulkDeleteRequest):
-    """Deletes multiple questions by their IDs in a single batch."""
+    """Deletes multiple questions by their IDs in a single batch (Admin only)."""
     count = db.delete_questions(payload.question_ids)
     return {
         "message": f"Successfully deleted {count} questions.",
@@ -376,10 +600,9 @@ def export_questions(payload: ExportRequest):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
-@app.get("/api/backup")
+@app.get("/api/backup", dependencies=[Depends(require_admin)])
 def export_backup(request: Request):
-    """Exports entire questions database as a structured JSON file."""
-    verify_auth(request)
+    """Exports entire questions database as a structured JSON file (Admin only)."""
     questions = db.get_all_questions_for_backup()
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_doc = {
@@ -396,9 +619,9 @@ def export_backup(request: Request):
         headers={"Content-Disposition": f'attachment; filename="questionbank_backup_{now_str}.json"'}
     )
 
-@app.post("/api/restore", dependencies=[Depends(verify_auth)])
+@app.post("/api/restore", dependencies=[Depends(require_admin)])
 async def import_backup(file: UploadFile = File(...)):
-    """Restores/merges questions from an uploaded JSON backup file into the active database."""
+    """Restores/merges questions from an uploaded JSON backup file into the active database (Admin only)."""
     content = await file.read()
     if len(content) > MAX_BATCH_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="Backup file exceeds maximum allowed size of 50 MB.")
@@ -432,9 +655,9 @@ def get_template_info():
         "description": "A4 Size, 0.5-inch margins, double-line page border, Times New Roman" if exists else "None"
     }
 
-@app.post("/api/template/upload", dependencies=[Depends(verify_auth)])
+@app.post("/api/template/upload", dependencies=[Depends(require_admin)])
 async def upload_custom_template(file: UploadFile = File(...)):
-    """Uploads or replaces the default printout page template (.docx)."""
+    """Uploads or replaces the default printout page template (.docx) (Admin only)."""
     if not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="Template file must be a .docx Word document.")
 

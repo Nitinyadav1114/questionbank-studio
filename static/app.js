@@ -2,6 +2,7 @@
 
 // Application State
 const state = {
+    currentUser: JSON.parse(sessionStorage.getItem('qb_user') || 'null'),
     cart: JSON.parse(localStorage.getItem('qb_cart') || '[]'),
     selectedFiles: [],
     selectedIds: new Set(),
@@ -110,19 +111,89 @@ const activeFiltersBadge = document.getElementById('active-filters-badge');
 // Auth Overlay Elements
 const authLockOverlay = document.getElementById('auth-lock-overlay');
 const authForm = document.getElementById('auth-form');
+const authUsernameInput = document.getElementById('auth-username-input');
 const authPasswordInput = document.getElementById('auth-password-input');
+const btnToggleLoginPwd = document.getElementById('btn-toggle-login-pwd');
+const authLockoutBanner = document.getElementById('auth-lockout-banner');
 const authErrorMsg = document.getElementById('auth-error-msg');
+const authBtnText = document.getElementById('auth-btn-text');
+const authBtnSpinner = document.getElementById('auth-btn-spinner');
 
-// Auth Token is strictly in-memory per page session - resets on every reload/visit
-let inMemoryAuthToken = '';
+// User Profile Elements (Desktop)
+const userProfileContainer = document.getElementById('user-profile-container');
+const userProfileBtn = document.getElementById('user-profile-btn');
+const userDropdownMenu = document.getElementById('user-dropdown-menu');
+const userAvatar = document.getElementById('user-avatar');
+const userDisplayName = document.getElementById('user-display-name');
+const userRoleBadge = document.getElementById('user-role-badge');
+const dropdownUsername = document.getElementById('dropdown-username');
+const dropdownRole = document.getElementById('dropdown-role');
+const btnOpenManageUsers = document.getElementById('btn-open-manage-users');
+const btnOpenChangePassword = document.getElementById('btn-open-change-password');
+const btnLogout = document.getElementById('btn-logout');
 
-// Clear any legacy stored tokens so every reload requires entering passcode
-sessionStorage.removeItem('app_auth_token');
-localStorage.removeItem('app_auth_token');
+// User Profile Elements (Mobile)
+const mobileUserCard = document.getElementById('mobile-user-card');
+const mobileUserAvatar = document.getElementById('mobile-user-avatar');
+const mobileUserName = document.getElementById('mobile-user-name');
+const mobileUserRoleBadge = document.getElementById('mobile-user-role-badge');
+const mobileUserUsername = document.getElementById('mobile-user-username');
+const btnMobileLogout = document.getElementById('btn-mobile-logout');
+const btnMobileManageUsers = document.getElementById('btn-mobile-manage-users');
+const btnMobileChangePassword = document.getElementById('btn-mobile-change-password');
+
+// User Management Modal Elements
+const userMgmtModal = document.getElementById('user-mgmt-modal');
+const closeUserMgmtBtn = document.getElementById('close-user-mgmt-btn');
+const createUserForm = document.getElementById('create-user-form');
+const newUsernameInput = document.getElementById('new-user-username');
+const newDisplayNameInput = document.getElementById('new-user-displayname');
+const newPasswordInput = document.getElementById('new-user-password');
+const newUserRoleSelect = document.getElementById('new-user-role');
+const createUserMsg = document.getElementById('create-user-msg');
+const userMgmtTableBody = document.getElementById('user-mgmt-table-body');
+
+// Change Password Modal Elements
+const changePasswordModal = document.getElementById('change-password-modal');
+const closeChangePwdBtn = document.getElementById('close-change-pwd-btn');
+const cancelChangePwdBtn = document.getElementById('cancel-change-pwd-btn');
+const changePwdForm = document.getElementById('change-pwd-form');
+const oldPwdInput = document.getElementById('old-pwd-input');
+const newPwdInput = document.getElementById('new-pwd-input');
+const confirmNewPwdInput = document.getElementById('confirm-new-pwd-input');
+const changePwdMsg = document.getElementById('change-pwd-msg');
+
+// ================= Auth, Session & RBAC Core =================
+
+// 15-Minute Inactivity Auto-Lock
+let inactivityTimer = null;
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
+function resetInactivityTimer() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    const token = sessionStorage.getItem('qb_token');
+    if (token) {
+        inactivityTimer = setTimeout(() => {
+            handleInactivityLogout();
+        }, INACTIVITY_TIMEOUT_MS);
+    }
+}
+
+function setupInactivityListeners() {
+    ['mousemove', 'keydown', 'touchstart', 'scroll', 'click'].forEach(evt => {
+        window.addEventListener(evt, resetInactivityTimer, { passive: true });
+    });
+}
+
+async function handleInactivityLogout() {
+    await performLogout(false);
+    showAuthOverlay("Session locked after 15 minutes of inactivity. Please sign in again.");
+}
 
 function getAuthHeaders(existingHeaders = {}) {
-    if (inMemoryAuthToken) {
-        return { ...existingHeaders, 'X-App-Password': inMemoryAuthToken };
+    const token = sessionStorage.getItem('qb_token');
+    if (token) {
+        return { ...existingHeaders, 'Authorization': `Bearer ${token}` };
     }
     return existingHeaders;
 }
@@ -131,35 +202,71 @@ async function apiFetch(url, options = {}) {
     options.headers = getAuthHeaders(options.headers || {});
     const res = await fetch(url, options);
     if (res.status === 401) {
-        showAuthOverlay();
+        clearSession();
+        showAuthOverlay("Session expired. Please sign in again.");
     }
     return res;
 }
 
 async function checkAuthStatus() {
     try {
+        const token = sessionStorage.getItem('qb_token');
+        if (!token) {
+            const res = await fetch('/api/auth/status');
+            if (res.ok) {
+                const data = await res.json();
+                if (!data.protected) {
+                    state.currentUser = data.user || { username: 'admin', role: 'admin' };
+                    updateUserProfileUI();
+                    return true;
+                }
+            }
+            showAuthOverlay();
+            return false;
+        }
+
         const res = await fetch('/api/auth/status', {
             headers: getAuthHeaders()
         });
         if (res.ok) {
             const data = await res.json();
-            if (data.protected && !data.authenticated) {
-                showAuthOverlay();
-                return false;
+            if (data.authenticated && data.user) {
+                state.currentUser = data.user;
+                sessionStorage.setItem('qb_user', JSON.stringify(data.user));
+                updateUserProfileUI();
+                resetInactivityTimer();
+                return true;
             }
         }
     } catch (e) {
         console.error("Auth status check failed:", e);
     }
-    return true;
+    clearSession();
+    showAuthOverlay();
+    return false;
 }
 
-function showAuthOverlay() {
+function clearSession() {
+    sessionStorage.removeItem('qb_token');
+    sessionStorage.removeItem('qb_user');
+    state.currentUser = null;
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    updateUserProfileUI();
+}
+
+function showAuthOverlay(customMessage = '') {
     if (authLockOverlay) {
         authLockOverlay.classList.remove('hidden');
-        if (authPasswordInput) {
-            authPasswordInput.value = '';
-            authPasswordInput.focus();
+        if (authErrorMsg) {
+            if (customMessage) {
+                authErrorMsg.textContent = customMessage;
+                authErrorMsg.classList.remove('hidden');
+            } else {
+                authErrorMsg.classList.add('hidden');
+            }
+        }
+        if (authUsernameInput) {
+            authUsernameInput.focus();
         }
     }
 }
@@ -180,13 +287,17 @@ function startLockoutCountdown(totalSeconds) {
     }
 
     let remaining = totalSeconds;
-    authErrorMsg.classList.remove('hidden');
+    if (authLockoutBanner) {
+        authLockoutBanner.classList.remove('hidden');
+    }
 
     const updateMsg = () => {
         const mins = Math.floor(remaining / 60);
         const secs = remaining % 60;
         const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-        authErrorMsg.textContent = `Too many failed attempts. Locked out for ${timeStr}.`;
+        if (authLockoutBanner) {
+            authLockoutBanner.textContent = `Too many failed attempts. Login locked for ${timeStr}.`;
+        }
     };
 
     updateMsg();
@@ -195,11 +306,11 @@ function startLockoutCountdown(totalSeconds) {
         remaining--;
         if (remaining <= 0) {
             clearInterval(lockoutTimer);
-            authErrorMsg.classList.add('hidden');
+            lockoutTimer = null;
+            if (authLockoutBanner) authLockoutBanner.classList.add('hidden');
             if (submitBtn) {
                 submitBtn.disabled = false;
                 submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                submitBtn.textContent = 'Unlock Studio';
             }
         } else {
             updateMsg();
@@ -209,19 +320,21 @@ function startLockoutCountdown(totalSeconds) {
 
 async function handleAuthSubmit(e) {
     e.preventDefault();
-    const pass = authPasswordInput.value.trim();
-    if (!pass) return;
+    const username = authUsernameInput ? authUsernameInput.value.trim() : '';
+    const password = authPasswordInput ? authPasswordInput.value.trim() : '';
+    if (!username || !password) return;
 
-    authErrorMsg.classList.add('hidden');
+    if (authErrorMsg) authErrorMsg.classList.add('hidden');
     const submitBtn = document.getElementById('btn-auth-unlock');
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Verifying...';
+    if (submitBtn) submitBtn.disabled = true;
+    if (authBtnText) authBtnText.textContent = 'Signing in...';
+    if (authBtnSpinner) authBtnSpinner.classList.remove('hidden');
 
     try {
-        const res = await fetch('/api/auth/verify', {
+        const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pass })
+            body: JSON.stringify({ username, password })
         });
 
         if (!res.ok) {
@@ -231,27 +344,291 @@ async function handleAuthSubmit(e) {
                 startLockoutCountdown(retryAfter);
                 return;
             }
-            throw new Error(err.detail || 'Incorrect passcode');
+            throw new Error(err.detail || 'Invalid username or password');
         }
 
-        inMemoryAuthToken = pass;
+        const data = await res.json();
+        sessionStorage.setItem('qb_token', data.token);
+        sessionStorage.setItem('qb_user', JSON.stringify(data.user));
+        state.currentUser = data.user;
+
         hideAuthOverlay();
+        updateUserProfileUI();
+        resetInactivityTimer();
+
         await loadMetadata();
         await loadQuestions();
     } catch (err) {
-        authErrorMsg.textContent = err.message;
-        authErrorMsg.classList.remove('hidden');
-    } finally {
-        if (!lockoutTimer) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Unlock Studio';
+        if (authErrorMsg) {
+            authErrorMsg.textContent = err.message;
+            authErrorMsg.classList.remove('hidden');
         }
+    } finally {
+        if (submitBtn && !lockoutTimer) {
+            submitBtn.disabled = false;
+        }
+        if (authBtnText) authBtnText.textContent = 'Sign In';
+        if (authBtnSpinner) authBtnSpinner.classList.add('hidden');
+    }
+}
+
+async function performLogout(askConfirm = true) {
+    if (askConfirm && !confirm("Are you sure you want to log out of QuestionBank Studio?")) return;
+    const token = sessionStorage.getItem('qb_token');
+    if (token) {
+        try {
+            await fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+        } catch (e) {}
+    }
+    clearSession();
+    showAuthOverlay();
+}
+
+function applyRoleVisibility() {
+    const isAdmin = state.currentUser && state.currentUser.role === 'admin';
+    document.querySelectorAll('.admin-only').forEach(el => {
+        if (isAdmin) {
+            el.classList.remove('hidden');
+        } else {
+            el.classList.add('hidden');
+        }
+    });
+}
+
+function updateUserProfileUI() {
+    const user = state.currentUser;
+    if (!user) {
+        if (userProfileContainer) userProfileContainer.classList.add('hidden');
+        if (mobileUserCard) mobileUserCard.classList.add('hidden');
+        return;
+    }
+
+    if (userProfileContainer) userProfileContainer.classList.remove('hidden');
+    if (mobileUserCard) mobileUserCard.classList.remove('hidden');
+
+    const firstLetter = (user.display_name || user.username || 'U').charAt(0).toUpperCase();
+    const isAdmin = user.role === 'admin';
+
+    // Desktop Pill
+    if (userAvatar) userAvatar.textContent = firstLetter;
+    if (userDisplayName) userDisplayName.textContent = user.display_name || user.username;
+    if (userRoleBadge) {
+        userRoleBadge.textContent = isAdmin ? 'Admin' : 'Teacher';
+        userRoleBadge.className = `px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+            isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
+        }`;
+    }
+    if (dropdownUsername) dropdownUsername.textContent = `@${user.username}`;
+    if (dropdownRole) dropdownRole.textContent = isAdmin ? '👑 Administrator' : '🎓 Teacher';
+
+    // Mobile Card
+    if (mobileUserAvatar) mobileUserAvatar.textContent = firstLetter;
+    if (mobileUserName) mobileUserName.textContent = user.display_name || user.username;
+    if (mobileUserRoleBadge) {
+        mobileUserRoleBadge.textContent = isAdmin ? 'Admin' : 'Teacher';
+        mobileUserRoleBadge.className = `px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+            isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
+        }`;
+    }
+    if (mobileUserUsername) mobileUserUsername.textContent = `@${user.username}`;
+
+    applyRoleVisibility();
+}
+
+// User Management Modal Handlers
+async function openUserMgmtModal() {
+    if (state.currentUser?.role !== 'admin') return;
+    if (createUserMsg) createUserMsg.classList.add('hidden');
+    if (createUserForm) createUserForm.reset();
+    if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+    if (userMgmtModal) userMgmtModal.classList.remove('hidden');
+    await loadUsersList();
+}
+
+function closeUserMgmtModal() {
+    if (userMgmtModal) userMgmtModal.classList.add('hidden');
+}
+
+async function loadUsersList() {
+    if (!userMgmtTableBody) return;
+    userMgmtTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Loading registered accounts...</td></tr>`;
+    try {
+        const res = await apiFetch('/api/admin/users');
+        if (!res.ok) throw new Error("Failed to load users");
+        const users = await res.json();
+
+        userMgmtTableBody.innerHTML = users.map(u => {
+            const isSelf = state.currentUser && state.currentUser.id === u.id;
+            const isAdmin = u.role === 'admin';
+            const createdDate = u.created_at ? u.created_at.split('T')[0] : '-';
+            return `
+                <tr class="hover:bg-slate-50 transition-colors">
+                    <td class="p-3">
+                        <div class="font-bold text-slate-800">${escapeHtml(u.display_name)}</div>
+                        <div class="text-[11px] text-slate-400">@${escapeHtml(u.username)}</div>
+                    </td>
+                    <td class="p-3">
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
+                        }">
+                            ${isAdmin ? '👑 Admin' : '🎓 Teacher'}
+                        </span>
+                    </td>
+                    <td class="p-3 text-slate-500">${createdDate}</td>
+                    <td class="p-3 text-right space-x-1.5 whitespace-nowrap">
+                        <button onclick="handleResetUserPasswordPrompt(${u.id}, '${escapeHtml(u.username)}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer">
+                            Reset Pass
+                        </button>
+                        ${!isSelf ? `
+                            <button onclick="handleDeleteUser(${u.id}, '${escapeHtml(u.username)}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer">
+                                Delete
+                            </button>
+                        ` : `
+                            <span class="text-[10px] text-slate-400 italic">You</span>
+                        `}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        userMgmtTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-600">Error loading users: ${escapeHtml(err.message)}</td></tr>`;
+    }
+}
+
+async function handleCreateUserSubmit(e) {
+    e.preventDefault();
+    const username = newUsernameInput.value.trim();
+    const displayName = newDisplayNameInput.value.trim();
+    const password = newPasswordInput.value.trim();
+    const role = newUserRoleSelect.value;
+
+    if (!username || !displayName || !password) return;
+
+    try {
+        const res = await apiFetch('/api/admin/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username,
+                display_name: displayName,
+                password,
+                role
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to create user');
+        }
+
+        createUserMsg.className = 'text-xs p-2.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 block';
+        createUserMsg.textContent = `Account created successfully for @${username}!`;
+        createUserForm.reset();
+        await loadUsersList();
+    } catch (err) {
+        createUserMsg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+        createUserMsg.textContent = 'Error: ' + err.message;
+    }
+}
+
+window.handleResetUserPasswordPrompt = async function(userId, username) {
+    const newPass = prompt(`Enter new password for @${username} (min 4 characters):`);
+    if (!newPass) return;
+    if (newPass.length < 4) {
+        alert("Password must be at least 4 characters long.");
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`/api/admin/users/${userId}/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_password: newPass })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to reset password');
+        }
+        alert(`Password for @${username} has been reset successfully!`);
+    } catch (err) {
+        alert("Error resetting password: " + err.message);
+    }
+};
+
+window.handleDeleteUser = async function(userId, username) {
+    if (!confirm(`Are you sure you want to permanently delete account @${username}?`)) return;
+
+    try {
+        const res = await apiFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to delete user');
+        }
+        await loadUsersList();
+    } catch (err) {
+        alert("Error deleting user: " + err.message);
+    }
+};
+
+// Change Password Modal Handlers
+function openChangePasswordModal() {
+    if (changePwdForm) changePwdForm.reset();
+    if (changePwdMsg) changePwdMsg.classList.add('hidden');
+    if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+    if (changePasswordModal) changePasswordModal.classList.remove('hidden');
+}
+
+function closeChangePasswordModal() {
+    if (changePasswordModal) changePasswordModal.classList.add('hidden');
+}
+
+async function handleChangePasswordSubmit(e) {
+    e.preventDefault();
+    const oldPass = oldPwdInput.value;
+    const newPass = newPwdInput.value;
+    const confirmPass = confirmNewPwdInput.value;
+
+    if (newPass !== confirmPass) {
+        changePwdMsg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+        changePwdMsg.textContent = 'New passwords do not match.';
+        return;
+    }
+    if (newPass.length < 4) {
+        changePwdMsg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+        changePwdMsg.textContent = 'New password must be at least 4 characters.';
+        return;
+    }
+
+    try {
+        const res = await apiFetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ old_password: oldPass, new_password: newPass })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to change password');
+        }
+
+        changePwdMsg.className = 'text-xs p-2.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 block';
+        changePwdMsg.textContent = 'Password changed successfully!';
+        setTimeout(() => {
+            closeChangePasswordModal();
+        }, 1200);
+    } catch (err) {
+        changePwdMsg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+        changePwdMsg.textContent = 'Error: ' + err.message;
     }
 }
 
 async function handleBackupLibrary() {
     try {
-        const url = inMemoryAuthToken ? `/api/backup?auth_token=${encodeURIComponent(inMemoryAuthToken)}` : '/api/backup';
+        const token = sessionStorage.getItem('qb_token');
+        const url = token ? `/api/backup?auth_token=${encodeURIComponent(token)}` : '/api/backup';
         window.location.href = url;
     } catch (e) {
         alert("Failed to download backup: " + e.message);
@@ -292,11 +669,14 @@ async function handleRestoreFileSelected(e) {
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
+    setupInactivityListeners();
     updateCartBadge();
     const isAuthed = await checkAuthStatus();
     if (isAuthed) {
+        updateUserProfileUI();
         loadMetadata();
         loadQuestions();
+        resetInactivityTimer();
     }
 });
 
@@ -436,6 +816,46 @@ function setupEventListeners() {
                 restoreFileInput.value = '';
                 restoreFileInput.click();
             }
+        });
+    }
+
+    // User Profile Dropdown Events (Desktop)
+    if (userProfileBtn && userDropdownMenu) {
+        userProfileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdownMenu.classList.toggle('hidden');
+        });
+        document.addEventListener('click', (e) => {
+            if (!userDropdownMenu.contains(e.target) && !userProfileBtn.contains(e.target)) {
+                userDropdownMenu.classList.add('hidden');
+            }
+        });
+    }
+
+    if (btnOpenManageUsers) btnOpenManageUsers.addEventListener('click', openUserMgmtModal);
+    if (btnOpenChangePassword) btnOpenChangePassword.addEventListener('click', openChangePasswordModal);
+    if (btnLogout) btnLogout.addEventListener('click', () => performLogout(true));
+
+    // Mobile User Profile Events
+    if (btnMobileManageUsers) btnMobileManageUsers.addEventListener('click', openUserMgmtModal);
+    if (btnMobileChangePassword) btnMobileChangePassword.addEventListener('click', openChangePasswordModal);
+    if (btnMobileLogout) btnMobileLogout.addEventListener('click', () => performLogout(true));
+
+    // User Management Modal Events
+    if (closeUserMgmtBtn) closeUserMgmtBtn.addEventListener('click', closeUserMgmtModal);
+    if (createUserForm) createUserForm.addEventListener('submit', handleCreateUserSubmit);
+
+    // Change Password Modal Events
+    if (closeChangePwdBtn) closeChangePwdBtn.addEventListener('click', closeChangePasswordModal);
+    if (cancelChangePwdBtn) cancelChangePwdBtn.addEventListener('click', closeChangePasswordModal);
+    if (changePwdForm) changePwdForm.addEventListener('submit', handleChangePasswordSubmit);
+
+    // Toggle Login Password Visibility
+    if (btnToggleLoginPwd && authPasswordInput) {
+        btnToggleLoginPwd.addEventListener('click', () => {
+            const isPassword = authPasswordInput.type === 'password';
+            authPasswordInput.type = isPassword ? 'text' : 'password';
+            btnToggleLoginPwd.textContent = isPassword ? '🙈' : '👁️';
         });
     }
 
@@ -775,12 +1195,14 @@ function renderQuestions(data) {
                             </svg>
                             <span class="sm:hidden font-medium">Edit</span>
                         </button>
+                        ${(state.currentUser && state.currentUser.role === 'admin') ? `
                         <button onclick="deleteQuestion(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer text-xs sm:text-inherit" title="Delete Question">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                             <span class="sm:hidden font-medium">Delete</span>
                         </button>
+                        ` : ''}
                     </div>
                 </div>
             </div>
@@ -831,12 +1253,21 @@ function clearSelection() {
 function updateBulkActionBar() {
     const count = state.selectedIds.size;
     bulkSelectedCount.textContent = `${count} selected`;
-    bulkDeleteBtn.innerHTML = `
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
-        <span>Delete Selected (${count})</span>
-    `;
+    const isAdmin = state.currentUser && state.currentUser.role === 'admin';
+
+    if (bulkDeleteBtn) {
+        if (isAdmin) {
+            bulkDeleteBtn.classList.remove('hidden');
+        } else {
+            bulkDeleteBtn.classList.add('hidden');
+        }
+        bulkDeleteBtn.innerHTML = `
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span>Delete Selected (${count})</span>
+        `;
+    }
     bulkAddCartBtn.textContent = `+ Add to Cart (${count})`;
 
     if (count > 0) {

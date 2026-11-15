@@ -43,3 +43,39 @@ class UploadStatsResponse(BaseModel):
     total_new: int
     total_merged: int
     file_summaries: List[UploadSummary]
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    role: str
+    is_active: bool = True
+    created_at: str
+    updated_at: str
+
+
+class UserLogin(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class TokenResponse(BaseModel):
+    token: str
+    user: UserResponse
+
+
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=2, max_length=100)
+    display_name: str = Field(..., min_length=1, max_length=150)
+    password: str = Field(..., min_length=4, max_length=200)
+    role: Optional[str] = Field(default="teacher", description="'admin' or 'teacher'")
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=4, max_length=200)
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=4, max_length=200)

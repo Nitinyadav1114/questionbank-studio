@@ -1,9 +1,129 @@
 import time
+import os
+import hashlib
+import secrets
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024       # 20 MB per file
 MAX_BATCH_SIZE_BYTES = 50 * 1024 * 1024      # 50 MB total batch upload
+HASH_ITERATIONS = 260_000                    # NIST SP 800-132 recommendation for PBKDF2-HMAC-SHA256
+SESSION_INACTIVITY_TIMEOUT = 15 * 60         # 15 minutes in seconds
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Hashes a password using PBKDF2-HMAC-SHA256 with 260,000 iterations and a random salt.
+    Returns: (hash_hex, salt_hex)
+    """
+    if not salt:
+        salt = secrets.token_hex(16)
+    
+    salt_bytes = bytes.fromhex(salt)
+    pwd_bytes = password.encode("utf-8")
+    hash_bytes = hashlib.pbkdf2_hmac("sha256", pwd_bytes, salt_bytes, HASH_ITERATIONS)
+    return hash_bytes.hex(), salt
+
+
+def verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
+    """
+    Verifies a plain text password against stored PBKDF2 hash and salt using constant-time comparison.
+    """
+    try:
+        salt_bytes = bytes.fromhex(stored_salt)
+        pwd_bytes = password.encode("utf-8")
+        computed = hashlib.pbkdf2_hmac("sha256", pwd_bytes, salt_bytes, HASH_ITERATIONS).hex()
+        return secrets.compare_digest(computed, stored_hash)
+    except Exception:
+        return False
+
+
+class SessionManager:
+    """
+    Thread-safe in-memory session token store with inactivity tracking.
+    """
+    def __init__(self, timeout_seconds: int = SESSION_INACTIVITY_TIMEOUT):
+        self.timeout_seconds = timeout_seconds
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def create_session(self, user: Dict[str, Any]) -> str:
+        """Issues a cryptographically secure 256-bit session token."""
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        with self._lock:
+            self._cleanup_expired(now)
+            self.sessions[token] = {
+                "user_id": user["id"],
+                "username": user["username"],
+                "display_name": user["display_name"],
+                "role": user["role"],
+                "created_at": now,
+                "last_active": now
+            }
+        return token
+
+    def get_session(self, token: str) -> Optional[Dict[str, Any]]:
+        """Retrieves and touches an active session if not expired."""
+        if not token:
+            return None
+        now = time.time()
+        with self._lock:
+            session = self.sessions.get(token)
+            if not session:
+                return None
+            if now - session["last_active"] > self.timeout_seconds:
+                del self.sessions[token]
+                return None
+            session["last_active"] = now
+            return dict(session)
+
+    def destroy_session(self, token: str) -> bool:
+        """Invalidates a session token upon explicit logout."""
+        with self._lock:
+            return self.sessions.pop(token, None) is not None
+
+    def _cleanup_expired(self, current_time: float):
+        """Removes expired sessions."""
+        expired = [
+            t for t, s in self.sessions.items()
+            if current_time - s["last_active"] > self.timeout_seconds
+        ]
+        for t in expired:
+            self.sessions.pop(t, None)
+
+    def reset_all(self):
+        """Testing utility: clears all sessions."""
+        with self._lock:
+            self.sessions.clear()
+
+
+# Global Session Manager instance
+session_manager = SessionManager(timeout_seconds=SESSION_INACTIVITY_TIMEOUT)
+
+
+def ensure_admin_user(database):
+    """
+    Ensures that an initial admin account exists in the database.
+    If no admin user exists, one is created from environment variables or defaults.
+    """
+    try:
+        users = database.list_users()
+        has_admin = any(u.get("role") == "admin" for u in users)
+        if not has_admin:
+            admin_user = os.environ.get("ADMIN_USERNAME", "admin").strip()
+            admin_pass = os.environ.get("ADMIN_PASSWORD") or os.environ.get("APP_PASSWORD") or "squire2026"
+            pwd_hash, salt = hash_password(admin_pass)
+            database.create_user(
+                username=admin_user,
+                display_name="Administrator",
+                password_hash=pwd_hash,
+                salt=salt,
+                role="admin"
+            )
+    except Exception as e:
+        print(f"[Warning] Failed to ensure admin user: {e}")
+
 
 class RateLimiter:
     """
