@@ -18,7 +18,9 @@ const state = {
         subject: '',
         topic: '',
         source: ''
-    }
+    },
+    pageCache: new Map(),
+    maxCacheEntries: 40
 };
 
 // DOM Elements
@@ -185,6 +187,41 @@ async function handleInactivityLogout() {
     showAuthOverlay("Session locked after 15 minutes of inactivity. Please sign in again.");
 }
 
+function getPageCacheKey(page, limit, filters) {
+    return `${page}_${limit}_${filters.search || ''}_${filters.subject || ''}_${filters.topic || ''}_${filters.source || ''}`;
+}
+
+function clearPageCache() {
+    state.pageCache.clear();
+}
+
+let wakeupBannerTimer = null;
+let isWakingUp = false;
+
+function showWakeupBanner() {
+    let banner = document.getElementById('render-wakeup-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'render-wakeup-banner';
+        banner.className = 'fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 dark:bg-slate-800/95 text-white dark:text-slate-100 px-4 py-2 rounded-full shadow-2xl border border-slate-700/80 flex items-center space-x-2.5 text-xs font-semibold backdrop-blur-md transition-all duration-300';
+        banner.innerHTML = `
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+            <span>⚡ Connecting to server... (Waking from free tier idle)</span>
+        `;
+        document.body.appendChild(banner);
+    }
+    banner.classList.remove('hidden');
+    isWakingUp = true;
+}
+
+function hideWakeupBanner() {
+    const banner = document.getElementById('render-wakeup-banner');
+    if (banner && isWakingUp) {
+        banner.classList.add('hidden');
+        isWakingUp = false;
+    }
+}
+
 function getAuthHeaders(existingHeaders = {}) {
     const token = sessionStorage.getItem('qb_token');
     if (token) {
@@ -193,14 +230,34 @@ function getAuthHeaders(existingHeaders = {}) {
     return existingHeaders;
 }
 
-async function apiFetch(url, options = {}) {
+async function apiFetch(url, options = {}, retries = 1) {
     options.headers = getAuthHeaders(options.headers || {});
-    const res = await fetch(url, options);
-    if (res.status === 401) {
-        clearSession();
-        showAuthOverlay("Session expired. Please sign in again.");
+    
+    // Set timer for polite wake-up feedback if request takes > 3.5s (free container wake-up)
+    const wakeupTimer = setTimeout(() => {
+        showWakeupBanner();
+    }, 3500);
+
+    try {
+        const res = await fetch(url, options);
+        clearTimeout(wakeupTimer);
+        hideWakeupBanner();
+
+        if (res.status === 401) {
+            clearSession();
+            showAuthOverlay("Session expired. Please sign in again.");
+        }
+        return res;
+    } catch (err) {
+        clearTimeout(wakeupTimer);
+        if (retries > 0) {
+            // Wait 2s and retry once in case network dropped during cold container start
+            await new Promise(r => setTimeout(r, 2000));
+            return apiFetch(url, options, retries - 1);
+        }
+        hideWakeupBanner();
+        throw err;
     }
-    return res;
 }
 
 async function checkAuthStatus() {
@@ -798,8 +855,9 @@ async function handleRestoreFileSelected(e) {
 
         const result = await res.json();
         showToast(result.message || "Library restored successfully!", "success");
+        clearPageCache();
         await loadMetadata();
-        await loadQuestions();
+        await loadQuestions(true);
     } catch (err) {
         showToast(`Error restoring backup: ${err.message}`, "error");
     }
@@ -1179,9 +1237,10 @@ async function handleUploadSubmit(e) {
         uploadTopicInput.value = '';
         renderSelectedFiles();
 
-        // Refresh library and metadata
+        // Invalidate page cache and refresh library and metadata
+        clearPageCache();
         await loadMetadata();
-        await loadQuestions();
+        await loadQuestions(true);
 
     } catch (error) {
         uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-rose-50 border-rose-200 text-rose-800 text-sm space-y-1 block";
@@ -1249,8 +1308,18 @@ function renderSkeletonCards(count = 4) {
     `).join('');
 }
 
-// Load Questions List
-async function loadQuestions() {
+// Load Questions List with Client-Side Page Caching
+async function loadQuestions(skipCache = false) {
+    const cacheKey = getPageCacheKey(state.currentPage, state.limit, state.filters);
+
+    if (!skipCache && state.pageCache.has(cacheKey)) {
+        const cached = state.pageCache.get(cacheKey);
+        state.currentQuestions = cached.items;
+        state.totalPages = Math.max(1, Math.ceil(cached.total / state.limit));
+        renderQuestions(cached);
+        return;
+    }
+
     renderSkeletonCards(4);
 
     const params = new URLSearchParams({
@@ -1267,6 +1336,13 @@ async function loadQuestions() {
         const res = await apiFetch(`/api/questions?${params.toString()}`);
         if (!res.ok) throw new Error("Failed to load questions");
         const data = await res.json();
+
+        // Save into LRU in-memory page cache
+        if (state.pageCache.size >= state.maxCacheEntries) {
+            const firstKey = state.pageCache.keys().next().value;
+            state.pageCache.delete(firstKey);
+        }
+        state.pageCache.set(cacheKey, data);
 
         state.currentQuestions = data.items;
         state.totalPages = Math.max(1, Math.ceil(data.total / state.limit));
@@ -1574,8 +1650,9 @@ async function handleBulkDelete() {
         updateBulkActionBar();
 
         showToast(`Successfully deleted ${ids.length} questions`, "info");
+        clearPageCache();
         await loadMetadata();
-        await loadQuestions();
+        await loadQuestions(true);
 
     } catch (err) {
         showToast("Error deleting questions: " + err.message, "error");
@@ -1884,8 +1961,9 @@ async function handleSaveEdit() {
 
         closeEditModal();
         showToast("Question updated successfully", "success");
+        clearPageCache();
         await loadMetadata();
-        await loadQuestions();
+        await loadQuestions(true);
 
         // Also update in cart if present
         const cartIndex = state.cart.findIndex(c => c.id === parseInt(id));
@@ -1917,8 +1995,9 @@ window.deleteQuestion = async function(id) {
         }
 
         showToast("Question deleted from library", "info");
+        clearPageCache();
         await loadMetadata();
-        await loadQuestions();
+        await loadQuestions(true);
     } catch (err) {
         showToast("Error deleting question: " + err.message, "error");
     }
@@ -1993,8 +2072,9 @@ async function handleSaveManualQuestion() {
             showToast("Question added to library successfully!", "success");
         }
 
+        clearPageCache();
         await loadMetadata();
-        await loadQuestions();
+        await loadQuestions(true);
 
         setTimeout(() => {
             closeAddModal();

@@ -129,3 +129,18 @@
         transform: translateY(-8px) scale(0.95);
     }
 }
+
+/* 60fps GPU Hardware Acceleration for Modals, Drawers, Dropdowns, and Floating Elements */
+#cart-drawer,
+#user-dropdown-menu,
+#login-overlay,
+#manual-question-modal,
+#manage-users-modal,
+#toast-container,
+#render-wakeup-banner {
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}

@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import sqlite3
 from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
@@ -8,6 +9,7 @@ from contextlib import contextmanager
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
     PSYCOPG2_AVAILABLE = True
 except ImportError:
     PSYCOPG2_AVAILABLE = False
@@ -17,6 +19,11 @@ class Database:
     def __init__(self, db_url_or_path: Optional[str] = None):
         target = db_url_or_path or os.environ.get("DATABASE_URL") or os.environ.get("QUESTION_BANK_DB", "questions.db")
         
+        self._metadata_cache: Optional[Dict[str, Any]] = None
+        self._metadata_cache_time: float = 0.0
+        self._metadata_ttl: float = 300.0  # 5 minutes in-memory cache
+        self.pool = None
+
         if target.startswith("postgres://") or target.startswith("postgresql://"):
             if not PSYCOPG2_AVAILABLE:
                 raise RuntimeError("psycopg2 is required for PostgreSQL connections. Run 'pip install psycopg2-binary'.")
@@ -27,6 +34,11 @@ class Database:
             url = re.sub(r"-pooler\.", ".", url)
             self.db_url = url
             self.db_path = None
+            try:
+                self.pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=self.db_url)
+            except Exception as e:
+                print(f"[Warning] Failed to initialize ThreadedConnectionPool: {e}")
+                self.pool = None
         else:
             self.is_postgres = False
             self.db_url = None
@@ -34,15 +46,51 @@ class Database:
             
         self.init_db()
 
+    def invalidate_metadata_cache(self):
+        """Invalidates in-memory metadata cache upon data modification."""
+        self._metadata_cache = None
+        self._metadata_cache_time = 0.0
+
     @contextmanager
     def get_connection(self):
         """Context manager providing a database connection with auto-closing and dictionary row access."""
         if self.is_postgres:
-            conn = psycopg2.connect(self.db_url)
+            conn = None
             try:
+                if self.pool is not None:
+                    conn = self.pool.getconn()
+                    # Check if connection is still healthy; if closed or broken, recreate
+                    if getattr(conn, "closed", 1) != 0:
+                        try:
+                            self.pool.putconn(conn, close=True)
+                        except Exception:
+                            pass
+                        conn = psycopg2.connect(self.db_url)
+                else:
+                    conn = psycopg2.connect(self.db_url)
                 yield conn
+            except Exception:
+                if conn and getattr(conn, "closed", 1) == 0:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                raise
             finally:
-                conn.close()
+                if conn:
+                    if self.pool is not None:
+                        try:
+                            if getattr(conn, "closed", 1) == 0:
+                                self.pool.putconn(conn)
+                            else:
+                                self.pool.putconn(conn, close=True)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
         else:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -174,6 +222,7 @@ class Database:
                 """)
                 cursor.execute(update_query, (current_freq + 1, json.dumps(sources_list), new_subject, new_topic, question_id))
                 conn.commit()
+                self.invalidate_metadata_cache()
                 return question_id, True
             else:
                 sources_list = [source_filename] if source_filename else []
@@ -185,6 +234,7 @@ class Database:
                 cursor.execute(insert_query, (question_text, normalized_text, subject, topic, json.dumps(sources_list)))
                 inserted_id = cursor.fetchone()[0]
                 conn.commit()
+                self.invalidate_metadata_cache()
                 return inserted_id, False
 
     def get_questions(
@@ -328,7 +378,10 @@ class Database:
             query = self._format_query(f"UPDATE questions SET {', '.join(updates)} WHERE id = ?")
             cursor.execute(query, params)
             conn.commit()
-            return cursor.rowcount > 0
+            if cursor.rowcount > 0:
+                self.invalidate_metadata_cache()
+                return True
+            return False
 
     def delete_question(self, question_id: int) -> bool:
         with self.get_connection() as conn:
@@ -336,7 +389,10 @@ class Database:
             query = self._format_query("DELETE FROM questions WHERE id = ?")
             cursor.execute(query, (question_id,))
             conn.commit()
-            return cursor.rowcount > 0
+            if cursor.rowcount > 0:
+                self.invalidate_metadata_cache()
+                return True
+            return False
 
     def delete_questions(self, question_ids: List[int]) -> int:
         if not question_ids:
@@ -347,10 +403,17 @@ class Database:
             query = self._format_query(f"DELETE FROM questions WHERE id IN ({placeholders})")
             cursor.execute(query, question_ids)
             conn.commit()
-            return cursor.rowcount
+            count = cursor.rowcount
+            if count > 0:
+                self.invalidate_metadata_cache()
+            return count
 
-    def get_metadata(self) -> Dict[str, Any]:
-        """Returns distinct subjects, topics, and source files along with high-level stats."""
+    def get_metadata(self, force_refresh: bool = False) -> Dict[str, Any]:
+        """Returns distinct subjects, topics, and source files along with high-level stats, using in-memory caching."""
+        now = time.time()
+        if not force_refresh and self._metadata_cache is not None and (now - self._metadata_cache_time < self._metadata_ttl):
+            return dict(self._metadata_cache)
+
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
 
@@ -377,7 +440,7 @@ class Database:
                     except Exception:
                         pass
 
-            return {
+            res = {
                 "total_unique": unique_count,
                 "total_occurrences": total_occurrences,
                 "merged_duplicates": merged_count,
@@ -386,6 +449,9 @@ class Database:
                 "sources": sorted(list(all_sources)),
                 "is_postgres": self.is_postgres
             }
+            self._metadata_cache = res
+            self._metadata_cache_time = time.time()
+            return res
 
     def get_all_questions_for_backup(self) -> List[Dict[str, Any]]:
         """Exports all questions in full detail for JSON backup and portability."""
@@ -483,6 +549,7 @@ class Database:
                     restored += 1
 
             conn.commit()
+            self.invalidate_metadata_cache()
 
         return {
             "restored": restored,

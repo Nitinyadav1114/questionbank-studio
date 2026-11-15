@@ -230,3 +230,24 @@ def test_passcode_auth(client_with_temp_db):
 
     finally:
         main_module.APP_PASSWORD = original_pass
+
+
+def test_healthz_and_caching(client_with_temp_db):
+    client = client_with_temp_db
+    
+    # 1. Healthz endpoint responds with status ok and service name
+    res = client.get("/healthz")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["service"] == "squire-way-app"
+    assert "timestamp" in data
+
+    # 2. Static file caching headers
+    static_res = client.get("/static/style.css")
+    if static_res.status_code == 200:
+        assert "max-age=86400" in static_res.headers.get("Cache-Control", "")
+
+    # 3. GZip response handling
+    gzip_res = client.get("/api/questions", headers={"Accept-Encoding": "gzip"})
+    assert gzip_res.status_code == 200

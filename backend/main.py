@@ -2,12 +2,13 @@ import os
 import re
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Depends, Header
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from backend.database import Database
@@ -121,19 +122,22 @@ async def add_security_headers(request: Request, call_next):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' https://questionbank-studio.onrender.com;"
+        "connect-src 'self' https://squire-way-app.onrender.com https://questionbank-studio.onrender.com;"
     )
-    # Ensure browsers never serve stale cached JavaScript or HTML
+    # Cache policies: HTML is never cached (always fresh); versioned static assets cached 1 day
     path = request.url.path
-    if path == "/" or path.endswith(".js") or path.endswith(".css") or path.endswith(".html"):
+    if path == "/" or path.endswith(".html"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    elif path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
     return response
 
 # Hardened CORS policy: Only allow own Render domain, custom domains, and local development
 raw_allowed = os.environ.get("ALLOWED_ORIGINS", "")
 allowed_origins = [
+    "https://squire-way-app.onrender.com",
     "https://questionbank-studio.onrender.com",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
@@ -153,6 +157,18 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# GZip compression reduces JSON API payloads, JS, and CSS size by 70%-80% over the wire
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+@app.get("/healthz")
+def health_check():
+    """Ultra-fast, zero-overhead health endpoint for container readiness and uptime pingers."""
+    return {
+        "status": "ok",
+        "service": "squire-way-app",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 @app.get("/api/auth/status")
 def auth_status(request: Request):
@@ -686,10 +702,18 @@ async def upload_custom_template(file: UploadFile = File(...)):
         "filename": file.filename
     }
 
-# Static files and root route
+# Static files with performance caching headers
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+class CachedStaticFiles(StaticFiles):
+    """Serves static assets with aggressive 1-day caching headers for versioned resources."""
+    def file_response(self, *args, **kwargs) -> Response:
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
+        return resp
+
 if os.path.exists(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", CachedStaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def serve_index():
