@@ -460,7 +460,7 @@ function updateUserProfileUI() {
     if (userDisplayName) userDisplayName.textContent = user.display_name || user.username;
     if (userRoleBadge) {
         userRoleBadge.textContent = isAdmin ? 'Admin' : 'Teacher';
-        userRoleBadge.className = `px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+        userRoleBadge.className = `hidden sm:inline-block px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
             isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
         }`;
     }
