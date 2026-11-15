@@ -85,6 +85,12 @@ def test_auth_login_flow(auth_client):
     r2 = client.post("/api/auth/login", json={"username": "admin", "password": "wrongpassword"})
     assert r2.status_code == 401
 
+    # 2b. Case sensitivity check: ADMIN or Admin must fail with 401
+    r_case1 = client.post("/api/auth/login", json={"username": "ADMIN", "password": "squire2026"})
+    assert r_case1.status_code == 401
+    r_case2 = client.post("/api/auth/login", json={"username": "Admin", "password": "squire2026"})
+    assert r_case2.status_code == 401
+
     # 3. Valid login
     r3 = client.post("/api/auth/login", json={"username": "admin", "password": "squire2026"})
     assert r3.status_code == 200

@@ -527,18 +527,27 @@ class Database:
             conn.commit()
             return user_id
 
-    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """Retrieves a user by username (case-insensitive)."""
+    def get_user_by_username(self, username: str, case_sensitive: bool = True) -> Optional[Dict[str, Any]]:
+        """Retrieves a user by username (case-sensitive by default)."""
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
-            query = self._format_query("""
-                SELECT id, username, display_name, password_hash, salt, role, is_active, created_at, updated_at
-                FROM users
-                WHERE LOWER(username) = LOWER(?)
-            """)
+            if case_sensitive:
+                query = self._format_query("""
+                    SELECT id, username, display_name, password_hash, salt, role, is_active, created_at, updated_at
+                    FROM users
+                    WHERE username = ?
+                """)
+            else:
+                query = self._format_query("""
+                    SELECT id, username, display_name, password_hash, salt, role, is_active, created_at, updated_at
+                    FROM users
+                    WHERE LOWER(username) = LOWER(?)
+                """)
             cursor.execute(query, (username.strip(),))
             row = cursor.fetchone()
             if not row:
+                return None
+            if case_sensitive and row["username"] != username.strip():
                 return None
             return {
                 "id": row["id"],

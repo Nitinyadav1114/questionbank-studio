@@ -199,15 +199,16 @@ def auth_login(request: Request, payload: UserLogin):
             headers={"Retry-After": str(remaining_lockout)}
         )
 
-    username_clean = payload.username.strip().lower()
-    user = db.get_user_by_username(username_clean)
+    username_clean = payload.username.strip()
+    user = db.get_user_by_username(username_clean, case_sensitive=True)
 
-    # Check credentials
+    # Check credentials (strictly case-sensitive username)
     is_valid = False
     if user and user.get("is_active"):
-        is_valid = verify_password(payload.password, user["password_hash"], user["salt"])
+        if user.get("username") == username_clean:
+            is_valid = verify_password(payload.password, user["password_hash"], user["salt"])
     elif username_clean == "admin" and APP_PASSWORD:
-        # Fallback for admin using APP_PASSWORD if set
+        # Fallback for admin using APP_PASSWORD if set (strictly lowercase 'admin')
         is_valid = secrets.compare_digest(payload.password.encode("utf-8"), APP_PASSWORD.encode("utf-8"))
         if is_valid:
             user = {
@@ -300,8 +301,10 @@ def admin_list_users(admin: dict = Depends(require_admin)):
 @app.post("/api/admin/users", response_model=UserResponse)
 def admin_create_user(payload: UserCreate, admin: dict = Depends(require_admin)):
     """Creates a new user account (Admin only)."""
-    clean_username = payload.username.strip().lower()
-    existing = db.get_user_by_username(clean_username)
+    clean_username = payload.username.strip()
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Username cannot be empty.")
+    existing = db.get_user_by_username(clean_username, case_sensitive=False)
     if existing:
         raise HTTPException(status_code=400, detail=f"Username '{clean_username}' already exists.")
 
