@@ -859,6 +859,7 @@ function setupEventListeners() {
     // User Profile Dropdown Events (Desktop)
     if (userProfileBtn && userDropdownMenu) {
         userProfileBtn.addEventListener('click', (e) => {
+            e.preventDefault();
             e.stopPropagation();
             userDropdownMenu.classList.toggle('hidden');
         });
@@ -869,23 +870,81 @@ function setupEventListeners() {
         });
     }
 
-    if (btnOpenManageUsers) btnOpenManageUsers.addEventListener('click', openUserMgmtModal);
-    if (btnOpenChangePassword) btnOpenChangePassword.addEventListener('click', openChangePasswordModal);
-    if (btnLogout) btnLogout.addEventListener('click', () => performLogout(true));
+    if (btnOpenManageUsers) {
+        btnOpenManageUsers.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+            openUserMgmtModal();
+        });
+    }
+    if (btnOpenChangePassword) {
+        btnOpenChangePassword.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+            openChangePasswordModal();
+        });
+    }
+    if (btnLogout) {
+        btnLogout.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+            performLogout(true);
+        });
+    }
 
     // Mobile User Profile Events
-    if (btnMobileManageUsers) btnMobileManageUsers.addEventListener('click', openUserMgmtModal);
-    if (btnMobileChangePassword) btnMobileChangePassword.addEventListener('click', openChangePasswordModal);
-    if (btnMobileLogout) btnMobileLogout.addEventListener('click', () => performLogout(true));
+    if (btnMobileManageUsers) {
+        btnMobileManageUsers.addEventListener('click', () => {
+            if (mobileMenuDrawer) mobileMenuDrawer.classList.add('hidden');
+            openUserMgmtModal();
+        });
+    }
+    if (btnMobileChangePassword) {
+        btnMobileChangePassword.addEventListener('click', () => {
+            if (mobileMenuDrawer) mobileMenuDrawer.classList.add('hidden');
+            openChangePasswordModal();
+        });
+    }
+    if (btnMobileLogout) {
+        btnMobileLogout.addEventListener('click', () => {
+            if (mobileMenuDrawer) mobileMenuDrawer.classList.add('hidden');
+            performLogout(true);
+        });
+    }
 
     // User Management Modal Events
     if (closeUserMgmtBtn) closeUserMgmtBtn.addEventListener('click', closeUserMgmtModal);
+    if (userMgmtModal) {
+        userMgmtModal.addEventListener('click', (e) => {
+            if (e.target === userMgmtModal) closeUserMgmtModal();
+        });
+    }
     if (createUserForm) createUserForm.addEventListener('submit', handleCreateUserSubmit);
 
     // Change Password Modal Events
     if (closeChangePwdBtn) closeChangePwdBtn.addEventListener('click', closeChangePasswordModal);
     if (cancelChangePwdBtn) cancelChangePwdBtn.addEventListener('click', closeChangePasswordModal);
+    if (changePasswordModal) {
+        changePasswordModal.addEventListener('click', (e) => {
+            if (e.target === changePasswordModal) closeChangePasswordModal();
+        });
+    }
     if (changePwdForm) changePwdForm.addEventListener('submit', handleChangePasswordSubmit);
+
+    // Global Escape Key to dismiss modals / dropdowns
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (userDropdownMenu && !userDropdownMenu.classList.contains('hidden')) {
+                userDropdownMenu.classList.add('hidden');
+            }
+            if (userMgmtModal && !userMgmtModal.classList.contains('hidden')) {
+                closeUserMgmtModal();
+            }
+            if (changePasswordModal && !changePasswordModal.classList.contains('hidden')) {
+                closeChangePasswordModal();
+            }
+        }
+    });
 
     // Toggle Login Password Visibility
     if (btnToggleLoginPwd && authPasswordInput) {
