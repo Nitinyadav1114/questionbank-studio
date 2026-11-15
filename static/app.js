@@ -90,18 +90,13 @@ const closeAddBtn = document.getElementById('close-add-btn');
 const cancelAddBtn = document.getElementById('cancel-add-btn');
 const saveAddBtn = document.getElementById('save-add-btn');
 
-// Backup & Restore Elements
+// Backup & Restore Elements (In User Profile Dropdown)
 const btnBackupLibrary = document.getElementById('btn-backup-library');
 const btnRestoreLibrary = document.getElementById('btn-restore-library');
 const restoreFileInput = document.getElementById('restore-file-input');
 
-// Mobile Utility Drawer Elements
-const mobileMenuBtn = document.getElementById('mobile-menu-btn');
-const mobileMenuDrawer = document.getElementById('mobile-menu-drawer');
-const statTotalMobile = document.getElementById('stat-total-mobile');
-const statMergedMobile = document.getElementById('stat-merged-mobile');
-const btnBackupLibraryMobile = document.getElementById('btn-backup-library-mobile');
-const btnRestoreLibraryMobile = document.getElementById('btn-restore-library-mobile');
+// Modern Toast Notification Container
+const toastContainer = document.getElementById('toast-container');
 
 // Mobile Collapsible Filters Elements
 const toggleFiltersBtn = document.getElementById('toggle-filters-btn');
@@ -119,7 +114,7 @@ const authErrorMsg = document.getElementById('auth-error-msg');
 const authBtnText = document.getElementById('auth-btn-text');
 const authBtnSpinner = document.getElementById('auth-btn-spinner');
 
-// User Profile Elements (Desktop)
+// User Profile Elements (Unified Desktop & Mobile)
 const userProfileContainer = document.getElementById('user-profile-container');
 const userProfileBtn = document.getElementById('user-profile-btn');
 const userDropdownMenu = document.getElementById('user-dropdown-menu');
@@ -131,16 +126,6 @@ const dropdownRole = document.getElementById('dropdown-role');
 const btnOpenManageUsers = document.getElementById('btn-open-manage-users');
 const btnOpenChangePassword = document.getElementById('btn-open-change-password');
 const btnLogout = document.getElementById('btn-logout');
-
-// User Profile Elements (Mobile)
-const mobileUserCard = document.getElementById('mobile-user-card');
-const mobileUserAvatar = document.getElementById('mobile-user-avatar');
-const mobileUserName = document.getElementById('mobile-user-name');
-const mobileUserRoleBadge = document.getElementById('mobile-user-role-badge');
-const mobileUserUsername = document.getElementById('mobile-user-username');
-const btnMobileLogout = document.getElementById('btn-mobile-logout');
-const btnMobileManageUsers = document.getElementById('btn-mobile-manage-users');
-const btnMobileChangePassword = document.getElementById('btn-mobile-change-password');
 
 // User Management Modal Elements
 const userMgmtModal = document.getElementById('user-mgmt-modal');
@@ -277,6 +262,50 @@ function hideAuthOverlay() {
         authLockOverlay.classList.add('hidden');
     }
 }
+
+// Modern Floating Toast Notification System
+function showToast(message, type = 'info', duration = 3500) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = 'toast-item toast-enter flex items-center space-x-2.5 p-3 sm:p-3.5 rounded-xl shadow-lg border text-xs font-semibold';
+
+    let icon = 'ℹ️';
+    let bgClasses = 'bg-white text-slate-800 border-slate-200';
+    if (type === 'success') {
+        icon = '✅';
+        bgClasses = 'bg-emerald-50 text-emerald-900 border-emerald-200';
+    } else if (type === 'error') {
+        icon = '❌';
+        bgClasses = 'bg-rose-50 text-rose-900 border-rose-200';
+    } else if (type === 'warning') {
+        icon = '⚠️';
+        bgClasses = 'bg-amber-50 text-amber-900 border-amber-200';
+    }
+    toast.className += ` ${bgClasses}`;
+
+    toast.innerHTML = `
+        <span class="text-sm shrink-0 select-none">${icon}</span>
+        <span class="flex-1 leading-snug">${escapeHtml(message)}</span>
+        <button class="text-slate-400 hover:text-slate-600 font-bold px-1 cursor-pointer" title="Dismiss">✕</button>
+    `;
+
+    const closeBtn = toast.querySelector('button');
+    const dismiss = () => {
+        toast.classList.remove('toast-enter');
+        toast.classList.add('toast-exit');
+        setTimeout(() => toast.remove(), 250);
+    };
+
+    closeBtn.addEventListener('click', dismiss);
+    container.appendChild(toast);
+
+    if (duration > 0) {
+        setTimeout(dismiss, duration);
+    }
+}
+window.showToast = showToast;
 
 // User Profile Dropdown Helper
 function toggleUserDropdown(e) {
@@ -418,17 +447,15 @@ function updateUserProfileUI() {
     const user = state.currentUser;
     if (!user) {
         if (userProfileContainer) userProfileContainer.classList.add('hidden');
-        if (mobileUserCard) mobileUserCard.classList.add('hidden');
         return;
     }
 
     if (userProfileContainer) userProfileContainer.classList.remove('hidden');
-    if (mobileUserCard) mobileUserCard.classList.remove('hidden');
 
     const firstLetter = (user.display_name || user.username || 'U').charAt(0).toUpperCase();
     const isAdmin = user.role === 'admin';
 
-    // Desktop Pill
+    // Unified Profile Pill (Desktop & Mobile)
     if (userAvatar) userAvatar.textContent = firstLetter;
     if (userDisplayName) userDisplayName.textContent = user.display_name || user.username;
     if (userRoleBadge) {
@@ -439,17 +466,6 @@ function updateUserProfileUI() {
     }
     if (dropdownUsername) dropdownUsername.textContent = `@${user.username}`;
     if (dropdownRole) dropdownRole.textContent = isAdmin ? '👑 Administrator' : '🎓 Teacher';
-
-    // Mobile Card
-    if (mobileUserAvatar) mobileUserAvatar.textContent = firstLetter;
-    if (mobileUserName) mobileUserName.textContent = user.display_name || user.username;
-    if (mobileUserRoleBadge) {
-        mobileUserRoleBadge.textContent = isAdmin ? 'Admin' : 'Teacher';
-        mobileUserRoleBadge.className = `px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
-            isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
-        }`;
-    }
-    if (mobileUserUsername) mobileUserUsername.textContent = `@${user.username}`;
 
     applyRoleVisibility();
 }
@@ -556,7 +572,7 @@ window.handleResetUserPasswordPrompt = async function(userId, username) {
     const newPass = prompt(`Enter new password for @${username} (min 4 characters):`);
     if (!newPass) return;
     if (newPass.length < 4) {
-        alert("Password must be at least 4 characters long.");
+        showToast("Password must be at least 4 characters long.", "warning");
         return;
     }
 
@@ -570,9 +586,9 @@ window.handleResetUserPasswordPrompt = async function(userId, username) {
             const err = await res.json();
             throw new Error(err.detail || 'Failed to reset password');
         }
-        alert(`Password for @${username} has been reset successfully!`);
+        showToast(`Password for @${username} has been reset successfully!`, "success");
     } catch (err) {
-        alert("Error resetting password: " + err.message);
+        showToast("Error resetting password: " + err.message, "error");
     }
 };
 
@@ -585,9 +601,10 @@ window.handleDeleteUser = async function(userId, username) {
             const err = await res.json();
             throw new Error(err.detail || 'Failed to delete user');
         }
+        showToast(`Account @${username} deleted successfully`, "info");
         await loadUsersList();
     } catch (err) {
-        alert("Error deleting user: " + err.message);
+        showToast("Error deleting user: " + err.message, "error");
     }
 };
 
@@ -649,9 +666,10 @@ async function handleBackupLibrary() {
     try {
         const token = sessionStorage.getItem('qb_token');
         const url = token ? `/api/backup?auth_token=${encodeURIComponent(token)}` : '/api/backup';
+        showToast("Generating library backup...", "info", 2000);
         window.location.href = url;
     } catch (e) {
-        alert("Failed to download backup: " + e.message);
+        showToast("Failed to download backup: " + e.message, "error");
     }
 }
 
@@ -665,6 +683,7 @@ async function handleRestoreFileSelected(e) {
 
     const formData = new FormData();
     formData.append('file', file);
+    showToast("Restoring question bank from file...", "info", 2500);
 
     try {
         const res = await apiFetch('/api/restore', {
@@ -678,11 +697,11 @@ async function handleRestoreFileSelected(e) {
         }
 
         const result = await res.json();
-        alert(`Restore Successful!\n\n${result.message}`);
+        showToast(result.message || "Library restored successfully!", "success");
         await loadMetadata();
         await loadQuestions();
     } catch (err) {
-        alert(`Error restoring backup: ${err.message}`);
+        showToast(`Error restoring backup: ${err.message}`, "error");
     }
 }
 
@@ -811,35 +830,27 @@ function setupEventListeners() {
     cancelAddBtn.addEventListener('click', closeAddModal);
     saveAddBtn.addEventListener('click', handleSaveManualQuestion);
 
-    // Backup & Restore Events
-    if (btnBackupLibrary) btnBackupLibrary.addEventListener('click', handleBackupLibrary);
-    if (btnRestoreLibrary) btnRestoreLibrary.addEventListener('click', () => {
-        if (restoreFileInput) {
-            restoreFileInput.value = '';
-            restoreFileInput.click();
-        }
-    });
-    if (restoreFileInput) restoreFileInput.addEventListener('change', handleRestoreFileSelected);
-
-    // Mobile Navigation Drawer Events
-    if (mobileMenuBtn && mobileMenuDrawer) {
-        mobileMenuBtn.addEventListener('click', () => {
-            mobileMenuDrawer.classList.toggle('hidden');
+    // Backup & Restore Events (Inside User Dropdown)
+    if (btnBackupLibrary) {
+        btnBackupLibrary.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+            handleBackupLibrary();
         });
     }
-    if (btnBackupLibraryMobile) {
-        btnBackupLibraryMobile.addEventListener('click', handleBackupLibrary);
-    }
-    if (btnRestoreLibraryMobile) {
-        btnRestoreLibraryMobile.addEventListener('click', () => {
+    if (btnRestoreLibrary) {
+        btnRestoreLibrary.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
             if (restoreFileInput) {
                 restoreFileInput.value = '';
                 restoreFileInput.click();
             }
         });
     }
+    if (restoreFileInput) restoreFileInput.addEventListener('change', handleRestoreFileSelected);
 
-    // User Profile Dropdown Events (Desktop)
+    // User Profile Dropdown Events (Unified Desktop & Mobile)
     if (userProfileBtn && userDropdownMenu) {
         userProfileBtn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -871,26 +882,6 @@ function setupEventListeners() {
         btnLogout.addEventListener('click', (e) => {
             e.stopPropagation();
             if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
-            performLogout(true);
-        });
-    }
-
-    // Mobile User Profile Events
-    if (btnMobileManageUsers) {
-        btnMobileManageUsers.addEventListener('click', () => {
-            if (mobileMenuDrawer) mobileMenuDrawer.classList.add('hidden');
-            openUserMgmtModal();
-        });
-    }
-    if (btnMobileChangePassword) {
-        btnMobileChangePassword.addEventListener('click', () => {
-            if (mobileMenuDrawer) mobileMenuDrawer.classList.add('hidden');
-            openChangePasswordModal();
-        });
-    }
-    if (btnMobileLogout) {
-        btnMobileLogout.addEventListener('click', () => {
-            if (mobileMenuDrawer) mobileMenuDrawer.classList.add('hidden');
             performLogout(true);
         });
     }
@@ -975,7 +966,7 @@ function handleFilesSelected(fileList) {
     });
 
     if (validFiles.length === 0) {
-        alert("Please select valid Word (.docx) or PDF (.pdf) files.");
+        showToast("Please select valid Word (.docx) or PDF (.pdf) files.", "warning");
         return;
     }
 
@@ -1122,17 +1113,36 @@ async function loadMetadata() {
     }
 }
 
+function renderSkeletonCards(count = 4) {
+    if (!questionsContainer) return;
+    questionsContainer.innerHTML = Array.from({ length: count }).map(() => `
+        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <div class="w-4 h-4 rounded skeleton-shimmer"></div>
+                    <div class="w-16 h-5 rounded-md skeleton-shimmer"></div>
+                    <div class="w-20 h-5 rounded-md skeleton-shimmer"></div>
+                </div>
+                <div class="w-12 h-4 rounded skeleton-shimmer"></div>
+            </div>
+            <div class="space-y-2">
+                <div class="w-full h-4 rounded skeleton-shimmer"></div>
+                <div class="w-3/4 h-4 rounded skeleton-shimmer"></div>
+            </div>
+            <div class="flex justify-between items-center pt-2">
+                <div class="w-24 h-4 rounded skeleton-shimmer"></div>
+                <div class="flex space-x-2">
+                    <div class="w-14 h-7 rounded-lg skeleton-shimmer"></div>
+                    <div class="w-14 h-7 rounded-lg skeleton-shimmer"></div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
 // Load Questions List
 async function loadQuestions() {
-    questionsContainer.innerHTML = `
-        <div class="py-12 text-center text-slate-400 space-y-2">
-            <svg class="animate-spin mx-auto h-6 w-6 text-brand-600" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="text-xs">Loading questions...</p>
-        </div>
-    `;
+    renderSkeletonCards(4);
 
     const params = new URLSearchParams({
         page: state.currentPage,
@@ -1399,11 +1409,12 @@ async function handleBulkDelete() {
         state.selectedIds.clear();
         updateBulkActionBar();
 
+        showToast(`Successfully deleted ${ids.length} questions`, "info");
         await loadMetadata();
         await loadQuestions();
 
     } catch (err) {
-        alert("Error deleting questions: " + err.message);
+        showToast("Error deleting questions: " + err.message, "error");
     } finally {
         bulkDeleteBtn.disabled = false;
         updateBulkActionBar();
@@ -1414,6 +1425,7 @@ function handleBulkAddToCart() {
     const ids = Array.from(state.selectedIds);
     if (ids.length === 0) return;
 
+    let addedCount = 0;
     ids.forEach(id => {
         if (!isQuestionInCart(id)) {
             const question = state.currentQuestions.find(q => q.id === id);
@@ -1424,6 +1436,7 @@ function handleBulkAddToCart() {
                     subject: question.subject,
                     topic: question.topic
                 });
+                addedCount++;
             }
         }
     });
@@ -1432,6 +1445,7 @@ function handleBulkAddToCart() {
     state.selectedIds.clear();
     updateBulkActionBar();
     renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    showToast(`Added ${addedCount} questions to Question Cart`, "success");
 }
 
 // Cart State Management
@@ -1456,6 +1470,7 @@ window.toggleCartQuestion = function(id) {
     const existingIndex = state.cart.findIndex(item => item.id === id);
     if (existingIndex > -1) {
         state.cart.splice(existingIndex, 1);
+        showToast("Removed from Question Cart", "info", 2000);
     } else {
         const question = state.currentQuestions.find(q => q.id === id);
         if (question) {
@@ -1465,6 +1480,7 @@ window.toggleCartQuestion = function(id) {
                 subject: question.subject,
                 topic: question.topic
             });
+            showToast("Added to Question Cart", "success", 2000);
         }
     }
     saveCart();
@@ -1486,6 +1502,11 @@ function addCurrentPageToCart() {
     });
     saveCart();
     renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    if (addedCount > 0) {
+        showToast(`Added ${addedCount} page questions to Question Cart`, "success");
+    } else {
+        showToast("All questions on this page are already in your cart", "info");
+    }
 }
 
 function openCart() {
@@ -1624,7 +1645,7 @@ async function downloadQuestions(questionIds, format = 'docx', title = '') {
         document.body.removeChild(a);
 
     } catch (err) {
-        alert(`Failed to export ${label}: ${err.message}`);
+        showToast(`Failed to export ${label}: ${err.message}`, "error");
     }
 }
 
@@ -1635,9 +1656,13 @@ window.downloadSingleQuestion = function(id, format) {
 
 // Download all questions currently in the Cart
 function exportFromCart(format) {
-    if (state.cart.length === 0) return;
+    if (state.cart.length === 0) {
+        showToast("Your cart is empty. Please add questions first.", "info");
+        return;
+    }
     const questionIds = state.cart.map(item => item.id);
     const title = paperTitleInput.value.trim();
+    showToast(`Generating ${format.toUpperCase()} question paper...`, "info", 2000);
     downloadQuestions(questionIds, format, title);
 }
 
@@ -1645,9 +1670,10 @@ function exportFromCart(format) {
 function handleBulkDownload(format) {
     const ids = Array.from(state.selectedIds);
     if (ids.length === 0) {
-        alert("Please select at least one question first.");
+        showToast("Please select at least one question first.", "info");
         return;
     }
+    showToast(`Generating ${format.toUpperCase()} export...`, "info", 2000);
     downloadQuestions(ids, format, '');
 }
 
@@ -1675,7 +1701,7 @@ async function handleSaveEdit() {
     const topic = editTopicInput.value.trim();
 
     if (!text) {
-        alert("Question text cannot be empty.");
+        showToast("Question text cannot be empty.", "warning");
         return;
     }
 
@@ -1693,6 +1719,7 @@ async function handleSaveEdit() {
         if (!res.ok) throw new Error("Failed to save changes");
 
         closeEditModal();
+        showToast("Question updated successfully", "success");
         await loadMetadata();
         await loadQuestions();
 
@@ -1706,7 +1733,7 @@ async function handleSaveEdit() {
         }
 
     } catch (err) {
-        alert("Error saving: " + err.message);
+        showToast("Error saving: " + err.message, "error");
     }
 }
 
@@ -1725,10 +1752,11 @@ window.deleteQuestion = async function(id) {
             saveCart();
         }
 
+        showToast("Question deleted from library", "info");
         await loadMetadata();
         await loadQuestions();
     } catch (err) {
-        alert("Error deleting question: " + err.message);
+        showToast("Error deleting question: " + err.message, "error");
     }
 };
 
@@ -1794,9 +1822,11 @@ async function handleSaveManualQuestion() {
         if (data.is_merged) {
             addModalMsg.className = 'text-xs p-3 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 block';
             addModalMsg.textContent = 'Duplicate found: This question already existed in the library, so its frequency counter was increased!';
+            showToast("Duplicate merged into existing question frequency", "info");
         } else {
             addModalMsg.className = 'text-xs p-3 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 block';
             addModalMsg.textContent = 'Question added to library successfully!';
+            showToast("Question added to library successfully!", "success");
         }
 
         await loadMetadata();
@@ -1809,6 +1839,7 @@ async function handleSaveManualQuestion() {
     } catch (err) {
         addModalMsg.className = 'text-xs p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 block';
         addModalMsg.textContent = 'Error: ' + err.message;
+        showToast("Error adding question: " + err.message, "error");
         saveAddBtn.disabled = false;
         saveAddBtn.innerHTML = `<span>Save to Library</span>`;
     }
