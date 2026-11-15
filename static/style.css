@@ -7,12 +7,21 @@
 #cart-items-container::-webkit-scrollbar-track {
     background: #f1f5f9;
 }
+.dark #cart-items-container::-webkit-scrollbar-track {
+    background: #1e293b;
+}
 #cart-items-container::-webkit-scrollbar-thumb {
     background: #cbd5e1;
     border-radius: 9999px;
 }
+.dark #cart-items-container::-webkit-scrollbar-thumb {
+    background: #475569;
+}
 #cart-items-container::-webkit-scrollbar-thumb:hover {
     background: #94a3b8;
+}
+.dark #cart-items-container::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
 }
 
 /* Card hover transitions */
@@ -22,6 +31,23 @@
 .question-card:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+}
+.dark .question-card:hover {
+    box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.45);
+}
+
+/* Compact Density Row Styling */
+.question-card.compact-view {
+    padding: 0.75rem 1rem !important;
+}
+.question-card.compact-view .question-body {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.question-card.compact-view.expanded .question-body {
+    -webkit-line-clamp: unset;
 }
 
 /* Animation for Cart Pill badge bounce */
@@ -38,6 +64,11 @@
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     color: #92400e;
     border: 1px solid #fcd34d;
+}
+.dark .high-frequency-badge {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.25) 100%);
+    color: #fde68a;
+    border: 1px solid rgba(245, 158, 11, 0.4);
 }
 
 /* Touch Targets: Ensure touch targets are at least 40px on mobile */
@@ -61,6 +92,10 @@
     background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
     background-size: 200% 100%;
     animation: skeletonShimmer 1.5s infinite ease-in-out;
+}
+.dark .skeleton-shimmer {
+    background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+    background-size: 200% 100%;
 }
 
 /* Floating Toast Notifications */

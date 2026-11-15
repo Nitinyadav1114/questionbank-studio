@@ -7,6 +7,8 @@ const state = {
     selectedFiles: [],
     selectedIds: new Set(),
     useTemplate: true,
+    theme: localStorage.getItem('qb_theme') || 'system',
+    density: localStorage.getItem('qb_density') || 'comfortable',
     currentPage: 1,
     limit: 25,
     totalPages: 1,
@@ -48,6 +50,8 @@ const styleNormalBtn = document.getElementById('style-normal-btn');
 const styleDesc = document.getElementById('style-desc');
 
 const searchInput = document.getElementById('search-input');
+const densityComfortableBtn = document.getElementById('density-comfortable-btn');
+const densityCompactBtn = document.getElementById('density-compact-btn');
 const filterSubject = document.getElementById('filter-subject');
 const filterTopic = document.getElementById('filter-topic');
 const filterSource = document.getElementById('filter-source');
@@ -126,6 +130,12 @@ const dropdownRole = document.getElementById('dropdown-role');
 const btnOpenManageUsers = document.getElementById('btn-open-manage-users');
 const btnOpenChangePassword = document.getElementById('btn-open-change-password');
 const btnLogout = document.getElementById('btn-logout');
+
+// Theme Switcher Elements (Inside User Dropdown)
+const themeBtnLight = document.getElementById('theme-btn-light');
+const themeBtnDark = document.getElementById('theme-btn-dark');
+const themeBtnSystem = document.getElementById('theme-btn-system');
+const themeActiveLabel = document.getElementById('theme-active-label');
 
 // User Management Modal Elements
 const userMgmtModal = document.getElementById('user-mgmt-modal');
@@ -461,14 +471,104 @@ function updateUserProfileUI() {
     if (userRoleBadge) {
         userRoleBadge.textContent = isAdmin ? 'Admin' : 'Teacher';
         userRoleBadge.className = `hidden sm:inline-block px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-            isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
+            isAdmin ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300' : 'bg-brand-100 dark:bg-brand-900/40 text-brand-800 dark:text-brand-300'
         }`;
     }
     if (dropdownUsername) dropdownUsername.textContent = `@${user.username}`;
     if (dropdownRole) dropdownRole.textContent = isAdmin ? '👑 Administrator' : '🎓 Teacher';
 
+    updateThemeUI();
     applyRoleVisibility();
 }
+
+// ================= Theme & Appearance (Light / Dark / System) =================
+function initTheme() {
+    applyThemeToHtml(state.theme);
+    updateThemeUI();
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            if (state.theme === 'system') {
+                applyThemeToHtml('system');
+                updateThemeUI();
+            }
+        });
+    }
+}
+
+function applyThemeToHtml(theme) {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (theme === 'dark' || (theme === 'system' && prefersDark)) {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+    }
+}
+
+function setTheme(theme) {
+    state.theme = theme;
+    localStorage.setItem('qb_theme', theme);
+    applyThemeToHtml(theme);
+    updateThemeUI();
+    showToast(`Theme switched to ${theme.charAt(0).toUpperCase() + theme.slice(1)}`, "info");
+}
+
+function updateThemeUI() {
+    if (!themeActiveLabel) return;
+    themeActiveLabel.textContent = state.theme;
+
+    const themeButtons = [
+        { btn: themeBtnLight, key: 'light' },
+        { btn: themeBtnDark, key: 'dark' },
+        { btn: themeBtnSystem, key: 'system' }
+    ];
+
+    themeButtons.forEach(({ btn, key }) => {
+        if (!btn) return;
+        if (state.theme === key) {
+            btn.className = "theme-choice-btn flex items-center justify-center space-x-1 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs border border-brand-200/60 dark:border-brand-800/60";
+        } else {
+            btn.className = "theme-choice-btn flex items-center justify-center space-x-1 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white";
+        }
+    });
+}
+
+// ================= View Density (Comfortable vs Compact) =================
+function initDensity() {
+    updateDensityUI();
+}
+
+function setDensity(mode) {
+    state.density = mode;
+    localStorage.setItem('qb_density', mode);
+    updateDensityUI();
+    if (state.currentQuestions && state.currentQuestions.length > 0) {
+        renderQuestions({ items: state.currentQuestions, total: statTotal ? statTotal.textContent : 0 });
+    }
+    showToast(`View density set to ${mode.charAt(0).toUpperCase() + mode.slice(1)}`, "info");
+}
+
+function updateDensityUI() {
+    if (!densityComfortableBtn || !densityCompactBtn) return;
+    if (state.density === 'compact') {
+        densityCompactBtn.className = "px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all cursor-pointer bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs border border-brand-200/60 dark:border-brand-800/60";
+        densityComfortableBtn.className = "px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1 transition-all cursor-pointer text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white";
+    } else {
+        densityComfortableBtn.className = "px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all cursor-pointer bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs border border-brand-200/60 dark:border-brand-800/60";
+        densityCompactBtn.className = "px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1 transition-all cursor-pointer text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white";
+    }
+}
+
+// ================= Quick Copy Question =================
+window.copyQuestionText = async function(id) {
+    const q = state.currentQuestions.find(item => item.id === id);
+    if (!q || !q.question_text) return;
+    try {
+        await navigator.clipboard.writeText(q.question_text);
+        showToast("Question copied to clipboard!", "success");
+    } catch (err) {
+        showToast("Failed to copy question text", "error");
+    }
+};
 
 // User Management Modal Handlers
 async function openUserMgmtModal() {
@@ -707,6 +807,8 @@ async function handleRestoreFileSelected(e) {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+    initTheme();
+    initDensity();
     setupEventListeners();
     setupInactivityListeners();
     updateCartBadge();
@@ -935,6 +1037,15 @@ function setupEventListeners() {
             filtersContainer.classList.toggle('hidden');
         });
     }
+
+    // Theme Switcher Click Events
+    if (themeBtnLight) themeBtnLight.addEventListener('click', () => setTheme('light'));
+    if (themeBtnDark) themeBtnDark.addEventListener('click', () => setTheme('dark'));
+    if (themeBtnSystem) themeBtnSystem.addEventListener('click', () => setTheme('system'));
+
+    // View Density Switcher Click Events
+    if (densityComfortableBtn) densityComfortableBtn.addEventListener('click', () => setDensity('comfortable'));
+    if (densityCompactBtn) densityCompactBtn.addEventListener('click', () => setDensity('compact'));
 
     const updateFiltersBadge = () => {
         let count = 0;
@@ -1174,14 +1285,14 @@ async function loadQuestions() {
 function renderQuestions(data) {
     if (!data.items || data.items.length === 0) {
         questionsContainer.innerHTML = `
-            <div class="bg-white rounded-2xl border border-slate-200/80 p-12 text-center text-slate-400 space-y-3">
-                <div class="w-12 h-12 rounded-full bg-slate-100 mx-auto flex items-center justify-center text-slate-400">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 p-12 text-center text-slate-400 space-y-3">
+                <div class="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700/60 mx-auto flex items-center justify-center text-slate-400">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                 </div>
-                <h3 class="font-bold text-slate-700 text-base">No questions found</h3>
-                <p class="text-xs text-slate-500 max-w-sm mx-auto">Upload Word (.docx) or PDF question banks above or try a different search filter.</p>
+                <h3 class="font-bold text-slate-700 dark:text-slate-200 text-base">No questions found</h3>
+                <p class="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">Upload Word (.docx) or PDF question banks above or try a different search filter.</p>
             </div>
         `;
         paginationInfo.textContent = "Showing 0 questions";
@@ -1197,8 +1308,10 @@ function renderQuestions(data) {
     pageIndicator.textContent = `${state.currentPage} / ${state.totalPages}`;
     prevPageBtn.disabled = state.currentPage <= 1;
     nextPageBtn.disabled = state.currentPage >= state.totalPages;
-    prevPageBtn.className = state.currentPage <= 1 ? "px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 cursor-not-allowed" : "px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer";
-    nextPageBtn.className = state.currentPage >= state.totalPages ? "px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 cursor-not-allowed" : "px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer";
+    prevPageBtn.className = state.currentPage <= 1 ? "px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-400 dark:text-slate-500 cursor-not-allowed" : "px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer";
+    nextPageBtn.className = state.currentPage >= state.totalPages ? "px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-400 dark:text-slate-500 cursor-not-allowed" : "px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer";
+
+    const isCompact = state.density === 'compact';
 
     questionsContainer.innerHTML = data.items.map((q) => {
         const inCart = isQuestionInCart(q.id);
@@ -1206,8 +1319,58 @@ function renderQuestions(data) {
         const isRepeated = freq > 1;
         const isSelected = state.selectedIds.has(q.id);
 
+        if (isCompact) {
+            // Compact Dense Row Layout
+            return `
+                <div data-id="${q.id}" class="question-card compact-view bg-white dark:bg-slate-800 p-3 sm:py-2.5 sm:px-4 rounded-xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 ring-1 ring-brand-500' : 'border-slate-200/80 dark:border-slate-700/80'} shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all">
+                    <div class="flex items-center space-x-3 flex-1 min-w-0">
+                        <input type="checkbox" onchange="toggleSelectQuestion(${q.id}, this.checked)" ${isSelected ? 'checked' : ''} class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 cursor-pointer shrink-0" title="Select question">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-1.5 flex-wrap mb-0.5">
+                                ${isRepeated ? `<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.2 rounded-full high-frequency-badge">🔥 ${freq}x</span>` : ''}
+                                ${q.subject ? `<span class="inline-flex items-center text-[10px] font-semibold px-2 py-0.2 rounded-full bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/60">📚 ${escapeHtml(q.subject)}</span>` : ''}
+                                ${q.topic ? `<span class="inline-flex items-center text-[10px] font-medium px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300">🏷️ ${escapeHtml(q.topic)}</span>` : ''}
+                            </div>
+                            <p onclick="this.closest('.question-card').classList.toggle('expanded')" class="question-body text-xs font-medium text-slate-900 dark:text-slate-100 cursor-pointer hover:text-brand-600 dark:hover:text-brand-400" title="Click to expand/collapse full question">
+                                ${escapeHtml(q.question_text)}
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Compact Action Buttons -->
+                    <div class="flex items-center space-x-1 shrink-0 justify-end pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
+                        <button onclick="toggleCartQuestion(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            inCart
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 hover:bg-brand-600 hover:text-white'
+                        }" title="${inCart ? 'Remove from Cart' : 'Add to Cart'}">
+                            <span>${inCart ? '✓ In Cart' : '+ Cart'}</span>
+                        </button>
+                        <button onclick="copyQuestionText(${q.id})" class="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer text-xs" title="Copy question text">
+                            📋
+                        </button>
+                        <button onclick="downloadSingleQuestion(${q.id}, 'docx')" class="p-1.5 rounded-lg text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-900/30 transition-colors cursor-pointer text-xs" title="Download Word (.docx)">
+                            📄
+                        </button>
+                        <button onclick="downloadSingleQuestion(${q.id}, 'pdf')" class="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors cursor-pointer text-xs" title="Download PDF (.pdf)">
+                            📕
+                        </button>
+                        <button onclick="openEditModal(${q.id})" class="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer text-xs" title="Edit Question">
+                            ✏️
+                        </button>
+                        ${(state.currentUser && state.currentUser.role === 'admin') ? `
+                        <button onclick="deleteQuestion(${q.id})" class="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors cursor-pointer text-xs" title="Delete Question">
+                            🗑️
+                        </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Comfortable Academic Card Layout
         return `
-            <div data-id="${q.id}" class="question-card bg-white p-5 rounded-2xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 ring-1 ring-brand-500' : 'border-slate-200/80'} shadow-sm flex flex-col md:flex-row md:items-start justify-between gap-4">
+            <div data-id="${q.id}" class="question-card bg-white dark:bg-slate-800 p-5 rounded-2xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 ring-1 ring-brand-500' : 'border-slate-200/80 dark:border-slate-700/80'} shadow-sm flex flex-col md:flex-row md:items-start justify-between gap-4 transition-all">
                 <div class="flex items-start space-x-3.5 flex-1">
                     <!-- Checkbox for multi-select -->
                     <input type="checkbox" onchange="toggleSelectQuestion(${q.id}, this.checked)" ${isSelected ? 'checked' : ''} class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 cursor-pointer mt-1 shrink-0" title="Select to delete or add to cart">
@@ -1220,70 +1383,73 @@ function renderQuestions(data) {
                                     <span>🔥 Appeared ${freq}x</span>
                                 </span>
                             ` : `
-                                <span class="inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                <span class="inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300">
                                     Appeared 1x
                                 </span>
                             `}
 
                             ${q.subject ? `
-                                <span class="inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-100">
+                                <span class="inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/60">
                                     📚 ${escapeHtml(q.subject)}
                                 </span>
                             ` : ''}
 
                             ${q.topic ? `
-                                <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300">
                                     🏷️ ${escapeHtml(q.topic)}
                                 </span>
                             ` : ''}
 
                             ${q.sources && q.sources.length ? `
-                                <span class="inline-flex items-center text-[11px] text-slate-400 px-1.5 py-0.5" title="Found in: ${escapeHtml(q.sources.join(', '))}">
+                                <span class="inline-flex items-center text-[11px] text-slate-400 dark:text-slate-500 px-1.5 py-0.5" title="Found in: ${escapeHtml(q.sources.join(', '))}">
                                     📄 ${q.sources.length} source file(s)
                                 </span>
                             ` : ''}
                         </div>
 
                         <!-- Question Text -->
-                        <p class="text-sm font-medium text-slate-900 leading-relaxed pt-1">
+                        <p class="text-sm font-medium text-slate-900 dark:text-slate-100 leading-relaxed pt-1">
                             ${escapeHtml(q.question_text)}
                         </p>
                     </div>
                 </div>
 
                 <!-- Action Buttons: Responsive 2-Tier on Mobile, Single Row on Desktop -->
-                <div class="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                <div class="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
                     <!-- Primary Actions (Add to Cart & Quick Exports) -->
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <button onclick="toggleCartQuestion(${q.id})" class="flex-1 sm:flex-none inline-flex items-center justify-center space-x-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold transition-all min-h-[38px] sm:min-h-0 cursor-pointer ${
                             inCart
                                 ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                                : 'bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-600 hover:text-white'
+                                : 'bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800 hover:bg-brand-600 dark:hover:bg-brand-600 hover:text-white'
                         }">
                             ${inCart ? '✓ In Cart' : '+ Add to Cart'}
                         </button>
                         
-                        <!-- Quick Download Word / PDF options on Question Card -->
-                        <div class="flex items-center space-x-1 border-l border-slate-200 pl-2">
-                            <button onclick="downloadSingleQuestion(${q.id}, 'docx')" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-brand-600 hover:bg-brand-50 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Download this question as Word (.docx)">
+                        <!-- Quick Download Word / PDF & Copy options on Question Card -->
+                        <div class="flex items-center space-x-1 border-l border-slate-200 dark:border-slate-700 pl-2">
+                            <button onclick="copyQuestionText(${q.id})" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-900/30 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Copy question text to clipboard">
+                                <span>📋 Copy</span>
+                            </button>
+                            <button onclick="downloadSingleQuestion(${q.id}, 'docx')" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-900/30 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Download this question as Word (.docx)">
                                 <span>📄 Word</span>
                             </button>
-                            <button onclick="downloadSingleQuestion(${q.id}, 'pdf')" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Download this question as PDF (.pdf)">
+                            <button onclick="downloadSingleQuestion(${q.id}, 'pdf')" class="px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors flex items-center space-x-1 cursor-pointer min-h-[38px] sm:min-h-0" title="Download this question as PDF (.pdf)">
                                 <span>📕 PDF</span>
                             </button>
                         </div>
                     </div>
 
                     <!-- Secondary Actions (Edit & Delete) -->
-                    <div class="flex items-center justify-end space-x-2 sm:space-x-1 sm:border-l sm:border-slate-200 sm:pl-2">
-                        <button onclick="openEditModal(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer text-xs sm:text-inherit" title="Edit Question">
+                    <div class="flex items-center justify-end space-x-2 sm:space-x-1 sm:border-l sm:border-slate-200 sm:dark:border-slate-700 sm:pl-2">
+                        <button onclick="openEditModal(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer text-xs sm:text-inherit" title="Edit Question">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                             </svg>
                             <span class="sm:hidden font-medium">Edit</span>
                         </button>
                         ${(state.currentUser && state.currentUser.role === 'admin') ? `
-                        <button onclick="deleteQuestion(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer text-xs sm:text-inherit" title="Delete Question">
+                        <button onclick="deleteQuestion(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1.5 sm:p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors cursor-pointer text-xs sm:text-inherit" title="Delete Question">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
@@ -1310,11 +1476,11 @@ window.toggleSelectQuestion = function(id, isChecked) {
     const card = document.querySelector(`.question-card[data-id="${id}"]`);
     if (card) {
         if (isChecked) {
-            card.classList.add('border-brand-500', 'bg-brand-50/20', 'ring-1', 'ring-brand-500');
-            card.classList.remove('border-slate-200/80');
+            card.classList.add('border-brand-500', 'bg-brand-50/20', 'dark:bg-brand-950/20', 'ring-1', 'ring-brand-500');
+            card.classList.remove('border-slate-200/80', 'dark:border-slate-700/80');
         } else {
-            card.classList.remove('border-brand-500', 'bg-brand-50/20', 'ring-1', 'ring-brand-500');
-            card.classList.add('border-slate-200/80');
+            card.classList.remove('border-brand-500', 'bg-brand-50/20', 'dark:bg-brand-950/20', 'ring-1', 'ring-brand-500');
+            card.classList.add('border-slate-200/80', 'dark:border-slate-700/80');
         }
     }
 };
@@ -1541,9 +1707,9 @@ function renderCartDrawer() {
             </div>
         `;
         exportDocxBtn.disabled = true;
-        exportDocxBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-slate-200 text-slate-400 font-bold py-3 rounded-xl cursor-not-allowed transition-all text-xs sm:text-sm";
+        exportDocxBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-bold py-3 rounded-xl cursor-not-allowed transition-all text-xs sm:text-sm";
         exportPdfBtn.disabled = true;
-        exportPdfBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-slate-200 text-slate-400 font-bold py-3 rounded-xl cursor-not-allowed transition-all text-xs sm:text-sm";
+        exportPdfBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-bold py-3 rounded-xl cursor-not-allowed transition-all text-xs sm:text-sm";
         return;
     }
 
@@ -1553,25 +1719,25 @@ function renderCartDrawer() {
     exportPdfBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-rose-600/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm";
 
     cartItemsContainer.innerHTML = state.cart.map((item, index) => `
-        <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex items-start justify-between gap-3 shadow-xs">
+        <div class="bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 rounded-xl p-3 flex items-start justify-between gap-3 shadow-xs">
             <div class="flex items-start space-x-2 flex-1">
-                <span class="w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                <span class="w-5 h-5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
                     ${index + 1}
                 </span>
-                <p class="text-xs text-slate-800 leading-snug line-clamp-3">
+                <p class="text-xs text-slate-800 dark:text-slate-100 leading-snug line-clamp-3">
                     ${escapeHtml(item.question_text)}
                 </p>
             </div>
 
             <!-- Controls: Move Up, Move Down, Remove with comfortable touch targets -->
             <div class="flex items-center space-x-1 shrink-0">
-                <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Up">
+                <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Up">
                     ▲
                 </button>
-                <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Down">
+                <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Down">
                     ▼
                 </button>
-                <button onclick="removeFromCart(${index})" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 font-bold ml-0.5 cursor-pointer" title="Remove">
+                <button onclick="removeFromCart(${index})" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold ml-0.5 cursor-pointer" title="Remove">
                     ✕
                 </button>
             </div>
@@ -1596,12 +1762,12 @@ window.removeFromCart = function(index) {
 function setTemplateMode(useTemplate) {
     state.useTemplate = useTemplate;
     if (useTemplate) {
-        styleDefaultBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold cursor-pointer transition-all select-none bg-white text-brand-700 shadow-xs border border-brand-200";
-        styleNormalBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold cursor-pointer transition-all select-none text-slate-600 hover:text-slate-900";
+        styleDefaultBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold cursor-pointer transition-all select-none bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs border border-brand-200/60 dark:border-brand-800/60";
+        styleNormalBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold cursor-pointer transition-all select-none text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white";
         styleDesc.innerHTML = 'Uses your master printout layout: <strong>A4 size, 0.5" margins, double page border, and Times New Roman</strong>.';
     } else {
-        styleNormalBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold cursor-pointer transition-all select-none bg-white text-brand-700 shadow-xs border border-brand-200";
-        styleDefaultBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold cursor-pointer transition-all select-none text-slate-600 hover:text-slate-900";
+        styleNormalBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-bold cursor-pointer transition-all select-none bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs border border-brand-200/60 dark:border-brand-800/60";
+        styleDefaultBtn.className = "flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold cursor-pointer transition-all select-none text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white";
         styleDesc.innerHTML = 'Standard layout: <strong>Letter size, 1" margins, Calibri</strong>.';
     }
 }
