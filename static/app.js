@@ -278,39 +278,17 @@ function hideAuthOverlay() {
     }
 }
 
-// Global window functions for direct inline click handlers
-window.toggleUserDropdown = function(e) {
+// User Profile Dropdown Helper
+function toggleUserDropdown(e) {
     if (e) {
         e.preventDefault();
         e.stopPropagation();
     }
-    const menu = document.getElementById('user-dropdown-menu');
-    if (menu) {
-        menu.classList.toggle('hidden');
+    if (userDropdownMenu) {
+        userDropdownMenu.classList.toggle('hidden');
     }
-};
-
-window.openUserMgmtModal = function(e) {
-    if (e) e.stopPropagation();
-    openUserMgmtModal();
-};
-
-window.closeUserMgmtModal = function() {
-    closeUserMgmtModal();
-};
-
-window.openChangePasswordModal = function(e) {
-    if (e) e.stopPropagation();
-    openChangePasswordModal();
-};
-
-window.closeChangePasswordModal = function() {
-    closeChangePasswordModal();
-};
-
-window.performLogout = function(askConfirm = true) {
-    performLogout(askConfirm);
-};
+}
+window.toggleUserDropdown = toggleUserDropdown;
 
 let lockoutTimer = null;
 function startLockoutCountdown(totalSeconds) {
@@ -423,6 +401,7 @@ async function performLogout(askConfirm = true) {
     clearSession();
     showAuthOverlay();
 }
+window.performLogout = performLogout;
 
 function applyRoleVisibility() {
     const isAdmin = state.currentUser && state.currentUser.role === 'admin';
@@ -488,6 +467,8 @@ async function openUserMgmtModal() {
 function closeUserMgmtModal() {
     if (userMgmtModal) userMgmtModal.classList.add('hidden');
 }
+window.openUserMgmtModal = openUserMgmtModal;
+window.closeUserMgmtModal = closeUserMgmtModal;
 
 async function loadUsersList() {
     if (!userMgmtTableBody) return;
@@ -621,6 +602,8 @@ function openChangePasswordModal() {
 function closeChangePasswordModal() {
     if (changePasswordModal) changePasswordModal.classList.add('hidden');
 }
+window.openChangePasswordModal = openChangePasswordModal;
+window.closeChangePasswordModal = closeChangePasswordModal;
 
 async function handleChangePasswordSubmit(e) {
     e.preventDefault();
