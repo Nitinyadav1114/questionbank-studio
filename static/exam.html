@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Squire Way — Digital Exam Room</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png?v=3.1.0">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#fdf2f4',
+                            100: '#fce7eb',
+                            200: '#f9d2d9',
+                            300: '#f4adb9',
+                            400: '#ec7b90',
+                            500: '#a32034',
+                            600: '#801828',
+                            700: '#6c1422',
+                            800: '#5c1420',
+                            900: '#50151f',
+                            950: '#2d080e',
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+
+    <!-- Theme Initialization Script -->
+    <script>
+        (function() {
+            try {
+                const savedTheme = localStorage.getItem('qb_theme') || 'system';
+                let isDark = false;
+                if (savedTheme === 'dark') isDark = true;
+                else if (savedTheme === 'light') isDark = false;
+                else isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                if (isDark) document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            } catch (e) {}
+        })();
+    </script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=3.3.1">
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col font-['Inter',sans-serif] transition-colors duration-150 select-none">
+
+    <!-- Floating Toast Notifications Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4 sm:px-0"></div>
+
+    <div id="exam-room-root" class="min-h-screen flex flex-col">
+        <!-- 1. LOADING VIEW -->
+        <div id="loading-view" class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <div class="w-16 h-16 mx-auto mb-4 relative flex items-center justify-center">
+                <div class="w-14 h-14 rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin"></div>
+            </div>
+            <h2 class="text-lg font-bold text-slate-900 dark:text-white">Connecting to Exam Room...</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Verifying digital test papers & scheduled timing.</p>
+        </div>
+
+        <!-- 2. ERROR / NOTICE VIEW -->
+        <div id="error-view" class="hidden flex-1 flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto">
+            <div class="w-16 h-16 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-3xl mb-4">
+                ⚠️
+            </div>
+            <h2 id="error-title" class="text-xl font-bold text-slate-900 dark:text-white">Exam Unavailable</h2>
+            <p id="error-message" class="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">The requested exam could not be found or has expired.</p>
+            <div class="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 w-full">
+                <button type="button" id="btn-error-lookup-result" class="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white transition shadow-sm cursor-pointer">
+                    Check Published Results 📋
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. ENTRY & STUDENT VERIFICATION VIEW -->
+        <div id="entry-view" class="hidden flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-xl mx-auto w-full my-auto">
+            <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-xl border border-slate-200/80 dark:border-slate-700/80 p-6 sm:p-8 w-full space-y-6">
+                <!-- Branding & Title -->
+                <div class="text-center space-y-2">
+                    <div class="w-12 h-12 mx-auto rounded-2xl bg-brand-50 dark:bg-brand-950/60 p-2 border border-brand-200 dark:border-brand-800 flex items-center justify-center">
+                        <img src="/static/img/logo-icon.png?v=3.1.1" alt="Squire Way Crest" class="w-full h-full object-contain">
+                    </div>
+                    <span id="entry-exam-code-badge" class="inline-block px-3 py-1 rounded-full text-xs font-mono font-extrabold bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800">
+                        ENG-2026-X9A
+                    </span>
+                    <h1 id="entry-exam-title" class="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
+                        Exam Title
+                    </h1>
+                    <p id="entry-exam-subject" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Subject
+                    </p>
+                </div>
+
+                <!-- Exam Metadata Highlights -->
+                <div class="grid grid-cols-3 gap-2.5 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 text-center">
+                    <div>
+                        <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Duration</span>
+                        <span id="entry-duration" class="text-sm font-bold text-slate-800 dark:text-slate-200 font-mono">60m</span>
+                    </div>
+                    <div>
+                        <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Total Marks</span>
+                        <span id="entry-total-marks" class="text-sm font-bold text-brand-600 dark:text-brand-400 font-mono">50 pts</span>
+                    </div>
+                    <div>
+                        <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Questions</span>
+                        <span id="entry-total-questions" class="text-sm font-bold text-slate-800 dark:text-slate-200 font-mono">10 Qs</span>
+                    </div>
+                </div>
+
+                <!-- Teacher Instructions -->
+                <div id="entry-instructions-card" class="text-xs bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/60 rounded-2xl p-4 text-amber-900 dark:text-amber-200 leading-relaxed space-y-1">
+                    <p class="font-bold flex items-center space-x-1">
+                        <span>📌</span>
+                        <span>Instructions for Students:</span>
+                    </p>
+                    <p id="entry-instructions-text" class="whitespace-pre-wrap pl-5 text-[11px]"></p>
+                </div>
+
+                <!-- Student Identity Verification Form -->
+                <form id="student-entry-form" class="space-y-4 pt-1">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Full Name *</label>
+                        <input type="text" id="student-name-input" required placeholder="Enter your full name" class="w-full text-sm px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Roll Number / Student ID *</label>
+                            <input type="text" id="student-roll-input" required placeholder="e.g. 2026-CS-042" class="w-full text-sm px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 uppercase font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Class Section (Optional)</label>
+                            <input type="text" id="student-section-input" placeholder="e.g. 10-A" class="w-full text-sm px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        </div>
+                    </div>
+
+                    <div class="pt-2 space-y-2.5">
+                        <button type="submit" id="btn-start-exam" class="w-full py-3.5 rounded-xl text-sm font-bold bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white shadow-md shadow-brand-500/25 active:scale-[0.98] transition cursor-pointer flex items-center justify-center space-x-2">
+                            <span>Start Digital Exam</span>
+                            <span>🚀</span>
+                        </button>
+                        <button type="button" id="btn-lookup-result-entry" class="w-full py-2.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer flex items-center justify-center space-x-1.5">
+                            <span>📋</span>
+                            <span>Already Submitted? Check Graded Result</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 4. ACTIVE EXAM ROOM VIEW -->
+        <div id="exam-room-view" class="hidden flex-1 flex flex-col">
+            <!-- Sticky Distraction-Free Header Bar -->
+            <header class="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-xs px-3 sm:px-6 py-2.5">
+                <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
+                    <!-- Left: Exam Title & Student Chip -->
+                    <div class="flex items-center space-x-2.5 min-w-0">
+                        <img src="/static/img/logo-icon.png?v=3.1.1" alt="Logo" class="w-7 h-7 object-contain shrink-0">
+                        <div class="min-w-0">
+                            <h2 id="top-bar-exam-title" class="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">Exam Title</h2>
+                            <p class="text-[10px] text-slate-400 truncate">
+                                <span id="top-bar-student-name" class="font-semibold text-slate-700 dark:text-slate-300">Student</span>
+                                (<span id="top-bar-student-roll" class="font-mono">ROLL</span>)
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Center: Floating Wall-Clock Synchronized Countdown Timer -->
+                    <div class="flex items-center space-x-2 shrink-0">
+                        <div id="timer-pill" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shadow-xs font-mono font-bold text-xs sm:text-sm text-slate-800 dark:text-slate-100">
+                            <span class="text-sm">⏱</span>
+                            <span id="timer-display">00:00</span>
+                        </div>
+                    </div>
+
+                    <!-- Right: Save Indicator & Submit Action -->
+                    <div class="flex items-center space-x-2 shrink-0">
+                        <span id="save-status-indicator" class="hidden sm:inline-block text-[11px] font-medium text-slate-400">
+                            ✓ Saved locally
+                        </span>
+                        <button type="button" id="btn-trigger-submit" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-brand-600 hover:bg-brand-700 text-white shadow-sm shadow-brand-500/20 active:scale-95 transition cursor-pointer flex items-center space-x-1.5">
+                            <span>Submit Exam</span>
+                            <span>🚀</span>
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Main Question Sheet & Navigator Container -->
+            <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                    <!-- Left Column: Scrollable Question Cards -->
+                    <div class="lg:col-span-3 space-y-6" id="exam-questions-container">
+                        <!-- Populated by renderExamQuestions() -->
+                    </div>
+
+                    <!-- Right Column: Sticky Question Navigator -->
+                    <aside class="lg:col-span-1 lg:sticky lg:top-20 space-y-4">
+                        <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 p-5 shadow-xs space-y-4">
+                            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700/80 pb-2.5">
+                                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Question Navigator</h3>
+                                <span id="nav-answered-summary" class="text-[11px] font-bold text-brand-600 dark:text-brand-400 font-mono">0 / 0 Answered</span>
+                            </div>
+
+                            <!-- Navigator Number Grid -->
+                            <div id="navigator-grid" class="grid grid-cols-5 gap-2">
+                                <!-- Populated dynamically [ 1 ] [ 2 ] ... -->
+                            </div>
+
+                            <div class="pt-2 border-t border-slate-100 dark:border-slate-700/80 space-y-1.5 text-[11px] text-slate-500">
+                                <div class="flex items-center space-x-2">
+                                    <span class="w-3.5 h-3.5 rounded-md bg-emerald-600 inline-block"></span>
+                                    <span>Answered (Typed or Photo)</span>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="w-3.5 h-3.5 rounded-md border border-slate-300 dark:border-slate-700 inline-block"></span>
+                                    <span>Pending / Unanswered</span>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            </main>
+        </div>
+
+        <!-- 5. CONFIRMATION RECEIPT VIEW -->
+        <div id="receipt-view" class="hidden flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-lg mx-auto w-full my-auto">
+            <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-xl border border-slate-200/80 dark:border-slate-700/80 p-6 sm:p-8 w-full text-center space-y-5 animate-in fade-in zoom-in duration-200">
+                <div class="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-3xl shadow-xs">
+                    ✓
+                </div>
+                <div>
+                    <h2 class="text-xl font-bold text-slate-900 dark:text-white">Exam Submitted Successfully!</h2>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Your responses have been recorded and locked for evaluation.</p>
+                </div>
+
+                <!-- Receipt Table -->
+                <div class="bg-slate-50 dark:bg-slate-900/60 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 text-left text-xs space-y-2.5">
+                    <div class="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+                        <span class="text-slate-400">Student Name:</span>
+                        <span id="receipt-student-name" class="font-bold text-slate-800 dark:text-slate-200">Jane Doe</span>
+                    </div>
+                    <div class="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+                        <span class="text-slate-400">Roll Number:</span>
+                        <span id="receipt-roll" class="font-mono font-bold text-slate-800 dark:text-slate-200">2026-CS-042</span>
+                    </div>
+                    <div class="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+                        <span class="text-slate-400">Submission Timestamp:</span>
+                        <span id="receipt-time" class="font-medium text-slate-700 dark:text-slate-300">Just now</span>
+                    </div>
+                    <div class="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+                        <span class="text-slate-400">Time Taken:</span>
+                        <span id="receipt-duration" class="font-medium text-slate-700 dark:text-slate-300">45m 20s</span>
+                    </div>
+                    <div class="flex justify-between py-1">
+                        <span class="text-slate-400">Status:</span>
+                        <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
+                            ⏳ Pending Evaluation
+                        </span>
+                    </div>
+                </div>
+
+                <p class="text-[11px] text-slate-400 leading-relaxed">
+                    Bookmark this page or revisit this exam link at any time with your Roll Number to view your graded scorecard once published.
+                </p>
+
+                <div class="flex items-center justify-center space-x-3 pt-2">
+                    <button type="button" onclick="window.print()" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                        🖨 Print Receipt
+                    </button>
+                    <button type="button" id="btn-receipt-check-scorecard" class="px-5 py-2 rounded-xl text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white shadow-sm cursor-pointer">
+                        Check Graded Scorecard 📋
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. GRADED SCORECARD VIEW -->
+        <div id="result-view" class="hidden flex-1 flex flex-col max-w-3xl mx-auto w-full p-4 sm:p-6 space-y-6">
+            <!-- Score Banner -->
+            <div class="bg-white dark:bg-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-200/80 dark:border-slate-700/80 text-center space-y-4">
+                <div class="flex items-center justify-center space-x-2">
+                    <span id="scorecard-exam-code" class="px-2.5 py-0.5 rounded-md text-xs font-mono font-bold bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 border border-brand-200 dark:border-brand-800">CODE</span>
+                    <h2 id="scorecard-exam-title" class="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">Exam Title</h2>
+                </div>
+
+                <div class="py-2">
+                    <span class="text-xs uppercase font-bold text-slate-400 tracking-wider block mb-1">Final Score Awarded</span>
+                    <div class="text-4xl sm:text-5xl font-mono font-extrabold text-emerald-600 dark:text-emerald-400">
+                        <span id="scorecard-total-awarded">0</span> <span class="text-2xl text-slate-400">/ <span id="scorecard-total-max">50</span></span>
+                    </div>
+                    <p id="scorecard-percentage" class="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-1">92.0%</p>
+                </div>
+
+                <!-- Student Info -->
+                <div class="inline-flex items-center space-x-3 px-4 py-1.5 rounded-full bg-slate-100 dark:bg-slate-900 text-xs text-slate-600 dark:text-slate-300">
+                    <span id="scorecard-student-name" class="font-bold">Student Name</span>
+                    <span>•</span>
+                    <span id="scorecard-roll" class="font-mono">ROLL</span>
+                    <span id="scorecard-section-wrapper">• <span id="scorecard-section">Section</span></span>
+                </div>
+
+                <!-- Teacher's Overall Feedback -->
+                <div id="scorecard-overall-feedback-card" class="bg-brand-50/70 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-900/60 rounded-2xl p-4 text-xs text-brand-900 dark:text-brand-200 text-left">
+                    <p class="font-bold flex items-center space-x-1.5 mb-1">
+                        <span>💬</span>
+                        <span>Instructor's Feedback:</span>
+                    </p>
+                    <p id="scorecard-overall-feedback" class="pl-5 leading-relaxed whitespace-pre-wrap"></p>
+                </div>
+            </div>
+
+            <!-- Per-Question Answer & Mark Breakdown -->
+            <div class="space-y-4">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500">Question Evaluation Breakdown</h3>
+                <div id="scorecard-questions-breakdown" class="space-y-4">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <div class="text-center py-4">
+                <button type="button" onclick="window.print()" class="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm cursor-pointer">
+                    🖨 Print Scorecard
+                </button>
+            </div>
+        </div>
+
+        <!-- 7. SUBMIT CONFIRMATION MODAL -->
+        <div id="submit-confirm-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+            <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 text-center space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700 animate-in fade-in zoom-in duration-150">
+                <div class="w-14 h-14 mx-auto rounded-full bg-brand-100 dark:bg-brand-950/60 text-brand-600 dark:text-brand-400 flex items-center justify-center text-2xl">
+                    🚀
+                </div>
+                <h3 class="text-lg font-bold text-slate-900 dark:text-white">Ready to Submit Exam?</h3>
+                <p class="text-xs text-slate-500 dark:text-slate-400">
+                    Once submitted, you will not be able to change your answers.
+                </p>
+
+                <!-- Unanswered Warning -->
+                <div id="modal-unanswered-warning" class="hidden text-xs bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60 p-3 rounded-xl font-medium text-left">
+                    ⚠️ You have <span id="modal-unanswered-count" class="font-bold">0</span> unanswered questions.
+                </div>
+
+                <div class="flex items-center justify-center space-x-3 pt-2">
+                    <button type="button" id="btn-cancel-modal-submit" class="px-4 py-2.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                        Review Questions
+                    </button>
+                    <button type="button" id="btn-confirm-modal-submit" class="px-5 py-2.5 rounded-xl text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white shadow-md shadow-brand-500/20 active:scale-95 cursor-pointer">
+                        Confirm & Submit 🚀
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 8. PHOTO ZOOM MODAL -->
+        <div id="student-photo-zoom-modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[60] hidden flex flex-col p-3 sm:p-6">
+            <div class="flex items-center justify-between text-white pb-3 shrink-0">
+                <span class="text-sm font-bold">Answer Sheet Inspection</span>
+                <button type="button" id="close-student-photo-zoom" class="p-2 text-2xl leading-none text-slate-400 hover:text-white cursor-pointer">&times;</button>
+            </div>
+            <div class="flex-1 overflow-auto flex items-center justify-center p-2">
+                <img id="student-photo-zoom-img" src="" alt="Answer Sheet Photo" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Exam Room Script -->
+    <script src="/static/exam.js?v=3.3.0"></script>
+</body>
+</html>

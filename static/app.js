@@ -2099,3 +2099,962 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
 }
+
+// ==========================================
+// Digital Exams & Evaluation Studio (Feature #5)
+// ==========================================
+
+const examsState = {
+    currentExams: [],
+    activeExamId: null,
+    activeSubmissions: [],
+    activeSubmissionDetail: null,
+    photoZoom: { scale: 1.0, rotation: 0 }
+};
+
+// 1. Hash Routing and Tab Switching
+function switchView(viewName, param) {
+    const navTabBank = document.getElementById('nav-tab-bank');
+    const navTabExams = document.getElementById('nav-tab-exams');
+    const bankView = document.getElementById('bank-view');
+    const examsView = document.getElementById('exams-view');
+    const examsDashView = document.getElementById('exams-dashboard-view');
+    const subView = document.getElementById('submissions-subview');
+
+    if (!bankView || !examsView) return;
+
+    if (viewName === 'exams' || viewName === 'submissions') {
+        bankView.classList.add('hidden');
+        examsView.classList.remove('hidden');
+
+        if (navTabBank && navTabExams) {
+            navTabBank.className = "px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center space-x-1.5 cursor-pointer";
+            navTabExams.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-brand-700 dark:text-brand-300 bg-white dark:bg-slate-700 shadow-xs flex items-center space-x-1.5 cursor-pointer";
+        }
+
+        if (viewName === 'submissions' && param) {
+            examsDashView?.classList.add('hidden');
+            subView?.classList.remove('hidden');
+            loadSubmissionsList(param);
+        } else {
+            subView?.classList.add('hidden');
+            examsDashView?.classList.remove('hidden');
+            loadExamsList();
+        }
+    } else {
+        examsView.classList.add('hidden');
+        bankView.classList.remove('hidden');
+
+        if (navTabBank && navTabExams) {
+            navTabBank.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-brand-700 dark:text-brand-300 bg-white dark:bg-slate-700 shadow-xs flex items-center space-x-1.5 cursor-pointer";
+            navTabExams.className = "px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center space-x-1.5 cursor-pointer";
+        }
+    }
+}
+
+function handleHashRoute() {
+    const hash = window.location.hash || '#bank';
+    if (hash.startsWith('#exams/submissions/')) {
+        const examId = hash.replace('#exams/submissions/', '');
+        switchView('submissions', parseInt(examId));
+    } else if (hash.startsWith('#exams')) {
+        switchView('exams');
+    } else {
+        switchView('bank');
+    }
+}
+
+window.addEventListener('hashchange', handleHashRoute);
+
+// 2. Exam Setup Modal Logic
+function openExamSetupModal() {
+    if (!state.cart || state.cart.length === 0) {
+        showToast("Please add at least 1 question to your cart first.", "warning");
+        return;
+    }
+
+    // Close cart drawer
+    if (typeof closeCart === 'function') closeCart();
+
+    const setupModal = document.getElementById('exam-setup-modal');
+    const titleInput = document.getElementById('setup-exam-title');
+    const subjInput = document.getElementById('setup-exam-subject');
+    const durationInput = document.getElementById('setup-exam-duration');
+    const deadlineInput = document.getElementById('setup-exam-deadline');
+    const instructionsInput = document.getElementById('setup-exam-instructions');
+
+    // Pre-populate Title
+    const paperTitleVal = document.getElementById('paper-title-input')?.value.trim();
+    const subjects = state.cart.map(q => q.subject).filter(Boolean);
+    const mostFreqSubject = subjects.length ? subjects[0] : "";
+    titleInput.value = paperTitleVal || (mostFreqSubject ? `${mostFreqSubject} Examination 2026` : "General Digital Examination");
+    subjInput.value = mostFreqSubject || "General";
+    durationInput.value = 60;
+
+    // Pre-populate Deadline (Tomorrow at 23:59 local time)
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(23, 59, 0, 0);
+    const yyyy = tomorrow.getFullYear();
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    const hh = String(tomorrow.getHours()).padStart(2, '0');
+    const min = String(tomorrow.getMinutes()).padStart(2, '0');
+    deadlineInput.value = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+
+    if (!instructionsInput.value.trim()) {
+        instructionsInput.value = "1. Answer all questions.\n2. You can type answers or upload clear photos of your handwritten sheets.\n3. Verify your answers before submitting. Submission is final.";
+    }
+
+    renderSetupMarksAllocation();
+    setupModal?.classList.remove('hidden');
+}
+
+function renderSetupMarksAllocation() {
+    const isCustom = document.getElementById('marks-mode-custom')?.checked;
+    const equalContainer = document.getElementById('equal-marks-container');
+    const customContainer = document.getElementById('custom-marks-container');
+    const totalMarksLabel = document.getElementById('setup-total-marks-label');
+    const equalValInput = document.getElementById('setup-equal-marks-val');
+
+    if (isCustom) {
+        equalContainer?.classList.add('hidden');
+        customContainer?.classList.remove('hidden');
+
+        customContainer.innerHTML = state.cart.map((q, idx) => `
+            <div class="flex items-center justify-between text-xs p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <span class="font-bold text-slate-500 mr-2 shrink-0">Q${idx + 1}</span>
+                <p class="text-slate-800 dark:text-slate-200 truncate flex-1 mr-3">${escapeHtml(q.question_text)}</p>
+                <div class="flex items-center space-x-1 shrink-0">
+                    <input type="number" min="0.5" step="0.5" value="5" data-idx="${idx}" class="setup-custom-mark-input w-16 text-center text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold">
+                    <span class="text-slate-400">pts</span>
+                </div>
+            </div>
+        `).join('');
+
+        updateCustomTotalMarks();
+        customContainer.querySelectorAll('.setup-custom-mark-input').forEach(input => {
+            input.addEventListener('input', updateCustomTotalMarks);
+        });
+    } else {
+        customContainer?.classList.add('hidden');
+        equalContainer?.classList.remove('hidden');
+        const eqVal = parseFloat(equalValInput?.value || 5.0);
+        const total = state.cart.length * eqVal;
+        if (totalMarksLabel) totalMarksLabel.textContent = total;
+    }
+}
+
+function updateCustomTotalMarks() {
+    const inputs = document.querySelectorAll('.setup-custom-mark-input');
+    let total = 0;
+    inputs.forEach(inp => {
+        total += parseFloat(inp.value || 0);
+    });
+    const totalMarksLabel = document.getElementById('setup-total-marks-label');
+    if (totalMarksLabel) totalMarksLabel.textContent = total;
+}
+
+// 3. Publishing Exam to Backend
+async function handlePublishExam(e) {
+    if (e) e.preventDefault();
+
+    const titleInput = document.getElementById('setup-exam-title');
+    const subjInput = document.getElementById('setup-exam-subject');
+    const durationInput = document.getElementById('setup-exam-duration');
+    const deadlineInput = document.getElementById('setup-exam-deadline');
+    const instructionsInput = document.getElementById('setup-exam-instructions');
+    const isCustom = document.getElementById('marks-mode-custom')?.checked;
+    const equalValInput = document.getElementById('setup-equal-marks-val');
+    const publishBtn = document.getElementById('btn-publish-exam-submit');
+
+    const title = titleInput.value.trim();
+    const subject = subjInput.value.trim();
+    const duration = parseInt(durationInput.value) || 60;
+    const deadline = deadlineInput.value;
+    const instructions = instructionsInput.value.trim();
+
+    if (!title) {
+        showToast("Please enter an exam title.", "warning");
+        return;
+    }
+    if (!deadline) {
+        showToast("Please select a scheduled deadline.", "warning");
+        return;
+    }
+
+    const eqVal = parseFloat(equalValInput?.value || 5.0);
+    const questionsPayload = state.cart.map((q, idx) => {
+        let marks = eqVal;
+        if (isCustom) {
+            const customInp = document.querySelector(`.setup-custom-mark-input[data-idx="${idx}"]`);
+            marks = customInp ? parseFloat(customInp.value || 0) : eqVal;
+        }
+        return {
+            question_id: q.id,
+            question_text: q.question_text,
+            marks: marks,
+            question_order: idx + 1
+        };
+    });
+
+    const totalMarks = questionsPayload.reduce((sum, q) => sum + q.marks, 0);
+
+    publishBtn.disabled = true;
+    publishBtn.innerHTML = `<span>Publishing... ⏳</span>`;
+
+    try {
+        const res = await apiFetch('/api/exams', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: title,
+                subject: subject,
+                duration_minutes: duration,
+                deadline: new Date(deadline).toISOString(),
+                instructions: instructions,
+                total_marks: totalMarks,
+                questions: questionsPayload
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to create exam');
+        }
+
+        const data = await res.json();
+        document.getElementById('exam-setup-modal')?.classList.add('hidden');
+        showExamSuccessModal(data);
+        showToast("Digital Exam Published Successfully! 🚀", "success");
+    } catch (err) {
+        showToast("Error publishing exam: " + err.message, "error");
+    } finally {
+        publishBtn.disabled = false;
+        publishBtn.innerHTML = `<span>Publish Exam 🚀</span>`;
+    }
+}
+
+// 4. Success Modal
+function showExamSuccessModal(data) {
+    const successModal = document.getElementById('exam-success-modal');
+    const codeEl = document.getElementById('success-exam-code');
+    const urlInput = document.getElementById('success-exam-url');
+    const qrContainer = document.getElementById('success-qr-container');
+    const whatsappBtn = document.getElementById('btn-whatsapp-share');
+    const openRoomBtn = document.getElementById('btn-open-exam-room');
+
+    if (codeEl) codeEl.textContent = data.exam_code;
+    if (urlInput) urlInput.value = data.exam_url;
+    if (qrContainer) qrContainer.innerHTML = data.qr_svg;
+
+    if (openRoomBtn) openRoomBtn.href = data.exam_url;
+    if (whatsappBtn) {
+        const msg = encodeURIComponent(`Join the ${data.title} exam:\n${data.exam_url}\nCode: ${data.exam_code}`);
+        whatsappBtn.href = `https://wa.me/?text=${msg}`;
+    }
+
+    // QR Download
+    const downloadQrBtn = document.getElementById('btn-download-qr');
+    if (downloadQrBtn) {
+        downloadQrBtn.onclick = () => {
+            const blob = new Blob([data.qr_svg], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${data.exam_code}-qr.svg`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+    }
+
+    successModal?.classList.remove('hidden');
+}
+
+// 5. Load and Render Exams Dashboard
+async function loadExamsList() {
+    const statusFilter = document.getElementById('filter-exam-status')?.value || "";
+    const container = document.getElementById('exams-table-container');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="p-8 text-center text-slate-400">
+            <span class="inline-block animate-spin text-2xl mb-2">⏳</span>
+            <p class="text-xs font-semibold">Loading digital exams...</p>
+        </div>
+    `;
+
+    try {
+        let url = '/api/exams?limit=100';
+        if (statusFilter) url += `&status=${statusFilter}`;
+        const res = await apiFetch(url);
+        if (!res.ok) throw new Error('Failed to load exams');
+
+        const data = await res.json();
+        examsState.currentExams = data.exams || [];
+
+        // Update stats
+        const total = examsState.currentExams.length;
+        const active = examsState.currentExams.filter(e => e.status === 'active').length;
+        const totalSubs = examsState.currentExams.reduce((sum, e) => sum + (e.submissions_count || 0), 0);
+        const pendingGrading = examsState.currentExams.reduce((sum, e) => sum + (e.pending_count || 0), 0);
+
+        const statTotal = document.getElementById('stat-total-exams');
+        const statActive = document.getElementById('stat-active-exams');
+        const statSubs = document.getElementById('stat-total-submissions');
+        const statPending = document.getElementById('stat-pending-grading');
+
+        if (statTotal) statTotal.textContent = total;
+        if (statActive) statActive.textContent = active;
+        if (statSubs) statSubs.textContent = totalSubs;
+        if (statPending) statPending.textContent = pendingGrading;
+
+        const navBadge = document.getElementById('nav-exams-badge');
+        if (navBadge) {
+            if (pendingGrading > 0) {
+                navBadge.textContent = pendingGrading;
+                navBadge.classList.remove('hidden');
+            } else {
+                navBadge.classList.add('hidden');
+            }
+        }
+
+        renderExamsList(examsState.currentExams);
+    } catch (err) {
+        container.innerHTML = `
+            <div class="p-8 text-center text-rose-500 text-xs font-medium">
+                Error loading exams: ${escapeHtml(err.message)}
+            </div>
+        `;
+    }
+}
+
+function renderExamsList(exams) {
+    const container = document.getElementById('exams-table-container');
+    if (!container) return;
+
+    if (!exams || exams.length === 0) {
+        container.innerHTML = `
+            <div class="p-12 text-center text-slate-400 dark:text-slate-500">
+                <span class="text-3xl block mb-2">📝</span>
+                <p class="text-sm font-semibold">No digital exams found</p>
+                <p class="text-xs mt-1">Select questions into your cart and click "Generate Digital Exam 🚀" to publish one.</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700/80 uppercase font-semibold">
+                <tr>
+                    <th class="py-3 px-4">Code</th>
+                    <th class="py-3 px-4">Exam Info</th>
+                    <th class="py-3 px-4">Duration & Deadline</th>
+                    <th class="py-3 px-4">Questions & Marks</th>
+                    <th class="py-3 px-4">Submissions</th>
+                    <th class="py-3 px-4">Status</th>
+                    <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                ${exams.map(e => {
+                    const isClosed = e.status === 'closed';
+                    const deadlineDate = new Date(e.deadline);
+                    const isExpired = new Date() > deadlineDate;
+                    const origin = window.location.origin;
+                    const examUrl = `${origin}/exam/${e.exam_code}`;
+
+                    return `
+                        <tr class="hover:bg-slate-50/75 dark:hover:bg-slate-700/30 transition-colors">
+                            <td class="py-3.5 px-4 font-mono font-bold text-brand-600 dark:text-brand-400">
+                                <span class="bg-brand-50 dark:bg-brand-950/60 px-2.5 py-1 rounded-lg border border-brand-200/60 dark:border-brand-800/60">
+                                    ${escapeHtml(e.exam_code)}
+                                </span>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <p class="font-bold text-slate-900 dark:text-white">${escapeHtml(e.title)}</p>
+                                <p class="text-[11px] text-slate-400 dark:text-slate-400">${escapeHtml(e.subject || 'General')}</p>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <p class="font-medium text-slate-700 dark:text-slate-300">⏱ ${e.duration_minutes} min</p>
+                                <p class="text-[11px] ${isExpired ? 'text-rose-500 font-semibold' : 'text-slate-400'}">
+                                    ${isExpired ? '⚠️ Expired: ' : '📅 '} ${deadlineDate.toLocaleString()}
+                                </p>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <span class="font-semibold text-slate-800 dark:text-slate-200">${e.questions_count} Qs</span>
+                                <span class="text-slate-400">• ${e.total_marks} pts</span>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <button onclick="openExamSubmissions(${e.id})" class="inline-flex items-center space-x-1 font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline cursor-pointer">
+                                    <span>${e.submissions_count || 0} Submissions</span>
+                                    ${e.pending_count > 0 ? `<span class="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] rounded-full font-bold">${e.pending_count} pending</span>` : ''}
+                                </button>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <button onclick="toggleExamStatus(${e.id})" class="px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider transition cursor-pointer ${
+                                    isClosed 
+                                        ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300'
+                                        : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200'
+                                }" title="Click to toggle active/closed">
+                                    ${isClosed ? 'Closed' : 'Active'}
+                                </button>
+                            </td>
+                            <td class="py-3.5 px-4 text-right space-x-1.5 shrink-0">
+                                <button onclick="openExamSubmissions(${e.id})" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="View Submissions & Grade">
+                                    📋 Grade
+                                </button>
+                                <button onclick="copyExamLink('${escapeHtml(examUrl)}')" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Copy Student Room Link">
+                                    🔗 Link
+                                </button>
+                                <button onclick="openExamQrModal('${escapeHtml(e.exam_code)}', '${escapeHtml(e.title)}')" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Show QR Code">
+                                    📱 QR
+                                </button>
+                                <button onclick="deleteExam(${e.id})" class="px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-semibold transition cursor-pointer" title="Delete Exam">
+                                    🗑️
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+window.copyExamLink = function(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        showToast("Exam room link copied to clipboard! 📋", "success");
+    }).catch(() => {
+        showToast("Link: " + url, "info");
+    });
+};
+
+window.toggleExamStatus = async function(examId) {
+    try {
+        const res = await apiFetch(`/api/exams/${examId}/toggle`, { method: 'PATCH' });
+        if (!res.ok) throw new Error('Failed to toggle status');
+        const data = await res.json();
+        showToast(`Exam status changed to ${data.status}.`, "info");
+        loadExamsList();
+    } catch (err) {
+        showToast("Error updating status: " + err.message, "error");
+    }
+};
+
+window.deleteExam = async function(examId) {
+    if (!confirm("Are you sure you want to delete this exam? All student submissions and grades will be permanently deleted.")) return;
+
+    try {
+        const res = await apiFetch(`/api/exams/${examId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete exam');
+        showToast("Exam deleted successfully.", "info");
+        loadExamsList();
+    } catch (err) {
+        showToast("Error deleting exam: " + err.message, "error");
+    }
+};
+
+// 6. Submissions & Grading Studio View
+window.openExamSubmissions = function(examId) {
+    window.location.hash = `#exams/submissions/${examId}`;
+};
+
+async function loadSubmissionsList(examId) {
+    examsState.activeExamId = examId;
+    const container = document.getElementById('submissions-table-container');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="p-8 text-center text-slate-400">
+            <span class="inline-block animate-spin text-2xl mb-2">⏳</span>
+            <p class="text-xs font-semibold">Loading student submissions...</p>
+        </div>
+    `;
+
+    try {
+        const res = await apiFetch(`/api/exams/${examId}/submissions`);
+        if (!res.ok) throw new Error('Failed to load submissions');
+
+        const data = await res.json();
+        const exam = data.exam;
+        examsState.activeSubmissions = data.submissions || [];
+
+        // Update header metadata
+        const codeBadge = document.getElementById('sub-view-code-badge');
+        const titleEl = document.getElementById('sub-view-title');
+        const metaEl = document.getElementById('sub-view-meta');
+
+        if (codeBadge) codeBadge.textContent = exam.exam_code;
+        if (titleEl) titleEl.textContent = exam.title;
+        if (metaEl) metaEl.textContent = `${exam.subject || 'General'} • Total Marks: ${exam.total_marks} • Duration: ${exam.duration_minutes} min`;
+
+        renderSubmissionsTable(examsState.activeSubmissions, exam);
+    } catch (err) {
+        container.innerHTML = `
+            <div class="p-8 text-center text-rose-500 text-xs font-medium">
+                Error loading submissions: ${escapeHtml(err.message)}
+            </div>
+        `;
+    }
+}
+
+function renderSubmissionsTable(submissions, exam) {
+    const container = document.getElementById('submissions-table-container');
+    if (!container) return;
+
+    if (!submissions || submissions.length === 0) {
+        container.innerHTML = `
+            <div class="p-12 text-center text-slate-400 dark:text-slate-500">
+                <span class="text-3xl block mb-2">📥</span>
+                <p class="text-sm font-semibold">No student submissions yet</p>
+                <p class="text-xs mt-1">Share the exam link or QR code with your students to start receiving submissions.</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700/80 uppercase font-semibold">
+                <tr>
+                    <th class="py-3 px-4">Roll Number</th>
+                    <th class="py-3 px-4">Student Name</th>
+                    <th class="py-3 px-4">Section</th>
+                    <th class="py-3 px-4">Submitted At & Time Taken</th>
+                    <th class="py-3 px-4">Evaluation Status</th>
+                    <th class="py-3 px-4">Total Score</th>
+                    <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                ${submissions.map(s => {
+                    const isGraded = s.status === 'graded';
+                    const submittedAt = new Date(s.submitted_at);
+                    const timeMins = Math.floor(s.time_taken_seconds / 60);
+                    const timeSecs = s.time_taken_seconds % 60;
+
+                    return `
+                        <tr class="hover:bg-slate-50/75 dark:hover:bg-slate-700/30 transition-colors">
+                            <td class="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-white">
+                                ${escapeHtml(s.roll_number)}
+                            </td>
+                            <td class="py-3.5 px-4 font-semibold text-slate-800 dark:text-slate-200">
+                                ${escapeHtml(s.student_name)}
+                            </td>
+                            <td class="py-3.5 px-4 text-slate-500 dark:text-slate-400">
+                                ${escapeHtml(s.section || '—')}
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <p class="text-slate-700 dark:text-slate-300 font-medium">${submittedAt.toLocaleString()}</p>
+                                <p class="text-[11px] text-slate-400">⏱ ${timeMins}m ${timeSecs}s taken</p>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <span class="px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                                    isGraded
+                                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                                        : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 animate-pulse'
+                                }">
+                                    ${isGraded ? 'Graded ✓' : 'Pending Evaluation'}
+                                </span>
+                            </td>
+                            <td class="py-3.5 px-4 font-mono font-bold ${isGraded ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}">
+                                ${isGraded ? `${s.total_score} / ${s.total_marks}` : `— / ${s.total_marks}`}
+                            </td>
+                            <td class="py-3.5 px-4 text-right">
+                                <button onclick="openGradingStudio(${s.id})" class="px-3.5 py-1.5 rounded-xl font-bold transition shadow-xs active:scale-95 cursor-pointer ${
+                                    isGraded
+                                        ? 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-600'
+                                        : 'bg-brand-600 hover:bg-brand-700 text-white shadow-brand-500/20'
+                                }">
+                                    ${isGraded ? 'Review / Edit ✎' : 'Grade Answer Sheet 🚀'}
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+// 7. Grading Workspace Modal Logic
+window.openGradingStudio = async function(submissionId) {
+    const modal = document.getElementById('grading-workspace-modal');
+    const container = document.getElementById('grading-questions-container');
+    if (!modal || !container) return;
+
+    container.innerHTML = `
+        <div class="p-12 text-center text-slate-400">
+            <span class="inline-block animate-spin text-3xl mb-2">⏳</span>
+            <p class="text-sm font-semibold">Loading student answer sheet...</p>
+        </div>
+    `;
+    modal.classList.remove('hidden');
+
+    try {
+        const res = await apiFetch(`/api/submissions/${submissionId}`);
+        if (!res.ok) throw new Error('Failed to load submission details');
+
+        const sub = await res.json();
+        examsState.activeSubmissionDetail = sub;
+
+        // Populate header
+        document.getElementById('grade-student-name').textContent = sub.student_name;
+        document.getElementById('grade-roll-badge').textContent = sub.roll_number;
+        const secBadge = document.getElementById('grade-section-badge');
+        if (secBadge) {
+            secBadge.textContent = sub.section ? `Section: ${sub.section}` : '';
+            secBadge.style.display = sub.section ? 'inline-block' : 'none';
+        }
+        document.getElementById('grade-exam-meta').textContent = `${sub.exam_title} • Submitted: ${new Date(sub.submitted_at).toLocaleString()} • Duration: ${Math.floor(sub.time_taken_seconds/60)}m ${sub.time_taken_seconds%60}s`;
+        document.getElementById('grade-max-score').textContent = sub.total_marks;
+        document.getElementById('grade-overall-feedback').value = sub.feedback || '';
+
+        renderGradingQuestions(sub.answers);
+        updateLiveAwardedScore();
+    } catch (err) {
+        container.innerHTML = `
+            <div class="p-8 text-center text-rose-500 text-xs font-medium">
+                Error loading submission: ${escapeHtml(err.message)}
+            </div>
+        `;
+    }
+};
+
+function renderGradingQuestions(answers) {
+    const container = document.getElementById('grading-questions-container');
+    if (!container) return;
+
+    if (!answers || answers.length === 0) {
+        container.innerHTML = `<p class="text-center text-slate-400 text-xs">No questions found.</p>`;
+        return;
+    }
+
+    container.innerHTML = answers.map((ans, idx) => {
+        const defaultMarks = ans.marks_awarded !== null ? ans.marks_awarded : 0;
+        const hasImage = Boolean(ans.image_data && ans.image_data.startsWith('data:image/'));
+
+        return `
+            <div class="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-700/80 p-5 shadow-xs space-y-4" data-q-id="${ans.question_id}">
+                <!-- Question Header -->
+                <div class="flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <div class="flex items-start space-x-2.5">
+                        <span class="w-6 h-6 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                            ${ans.question_order || idx + 1}
+                        </span>
+                        <div>
+                            <p class="text-sm font-semibold text-slate-900 dark:text-white leading-relaxed">
+                                ${escapeHtml(ans.question_text)}
+                            </p>
+                        </div>
+                    </div>
+                    <span class="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold shrink-0">
+                        Max: ${ans.max_marks} pts
+                    </span>
+                </div>
+
+                <!-- Student Answer Body (Typed Text & Photo) -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Typed Answer Box -->
+                    <div class="space-y-1.5">
+                        <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Typed Response:</span>
+                        <div class="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-xs text-slate-800 dark:text-slate-200 min-h-[90px] whitespace-pre-wrap leading-relaxed select-text">
+                            ${ans.typed_answer ? escapeHtml(ans.typed_answer) : '<span class="text-slate-400 italic">No typed text submitted.</span>'}
+                        </div>
+                    </div>
+
+                    <!-- Photo Sheet Box -->
+                    <div class="space-y-1.5">
+                        <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Handwritten Photo Sheet:</span>
+                        ${hasImage ? `
+                            <div class="relative group border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-950 flex items-center justify-center h-[90px]">
+                                <img src="${ans.image_data}" alt="Answer Sheet Photo" class="object-cover w-full h-full">
+                                <div class="absolute inset-0 bg-slate-950/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <button type="button" onclick="openPhotoZoomModal('${ans.image_data}', 'Question ${ans.question_order || idx + 1}')" class="px-3 py-1.5 rounded-lg bg-white/90 dark:bg-slate-900/90 text-xs font-bold text-slate-900 dark:text-white shadow-md hover:scale-105 transition cursor-pointer flex items-center space-x-1">
+                                        <span>🔍</span>
+                                        <span>Zoom & Inspect</span>
+                                    </button>
+                                </div>
+                            </div>
+                        ` : `
+                            <div class="p-3.5 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 text-xs text-slate-400 italic flex items-center justify-center h-[90px]">
+                                No photo sheet uploaded.
+                            </div>
+                        `}
+                    </div>
+                </div>
+
+                <!-- Teacher Marks & Feedback Inputs -->
+                <div class="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/60 dark:bg-slate-950/30 -mx-5 -mb-5 p-4 rounded-b-2xl">
+                    <div class="flex items-center space-x-2">
+                        <label class="text-xs font-bold text-slate-700 dark:text-slate-300">Awarded Marks:</label>
+                        <input type="number" min="0" max="${ans.max_marks}" step="0.5" value="${defaultMarks}" data-max="${ans.max_marks}" class="grade-marks-input w-20 text-center font-bold text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 text-sm">
+                        <span class="text-xs text-slate-400">/ ${ans.max_marks} pts</span>
+                    </div>
+                    <div class="flex-1 max-w-md">
+                        <input type="text" placeholder="Question-specific feedback / note..." value="${escapeHtml(ans.feedback || '')}" class="grade-feedback-input w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    // Attach live score calculation listener
+    container.querySelectorAll('.grade-marks-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const max = parseFloat(inp.getAttribute('data-max') || 100);
+            let val = parseFloat(inp.value || 0);
+            if (val > max) inp.value = max;
+            if (val < 0) inp.value = 0;
+            updateLiveAwardedScore();
+        });
+    });
+}
+
+function updateLiveAwardedScore() {
+    const inputs = document.querySelectorAll('.grade-marks-input');
+    let total = 0;
+    inputs.forEach(inp => {
+        total += parseFloat(inp.value || 0);
+    });
+    const label = document.getElementById('live-awarded-score');
+    if (label) label.textContent = total;
+}
+
+async function handlePublishEvaluation() {
+    if (!examsState.activeSubmissionDetail) return;
+    const subId = examsState.activeSubmissionDetail.id;
+    const overallFeedback = document.getElementById('grade-overall-feedback')?.value.trim() || '';
+    const qCards = document.querySelectorAll('#grading-questions-container > div');
+
+    const grades = [];
+    qCards.forEach(card => {
+        const qId = parseInt(card.getAttribute('data-q-id'));
+        const marksInp = card.querySelector('.grade-marks-input');
+        const fbInp = card.querySelector('.grade-feedback-input');
+        grades.push({
+            question_id: qId,
+            marks_awarded: parseFloat(marksInp?.value || 0),
+            feedback: fbInp?.value.trim() || ''
+        });
+    });
+
+    const publishBtn = document.getElementById('btn-publish-evaluation');
+    publishBtn.disabled = true;
+    publishBtn.innerHTML = `<span>Publishing... ⏳</span>`;
+
+    try {
+        const res = await apiFetch(`/api/submissions/${subId}/grade`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                grades: grades,
+                overall_feedback: overallFeedback,
+                is_published: true
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to publish grades');
+        }
+
+        document.getElementById('grading-workspace-modal')?.classList.add('hidden');
+        showToast("Student grades published successfully! 🎉", "success");
+
+        // Refresh submissions table
+        if (examsState.activeExamId) {
+            loadSubmissionsList(examsState.activeExamId);
+        }
+    } catch (err) {
+        showToast("Error publishing evaluation: " + err.message, "error");
+    } finally {
+        publishBtn.disabled = false;
+        publishBtn.innerHTML = `<span>Publish Evaluation & Marks 🚀</span>`;
+    }
+}
+
+// 8. Photo Zoom Modal / Lightbox Logic
+window.openPhotoZoomModal = function(imgSrc, title) {
+    const modal = document.getElementById('photo-zoom-modal');
+    const img = document.getElementById('photo-zoom-img');
+    const titleEl = document.getElementById('photo-zoom-title');
+    if (!modal || !img) return;
+
+    if (titleEl) titleEl.textContent = title || "Handwritten Answer Sheet";
+    img.src = imgSrc;
+    examsState.photoZoom.scale = 1.0;
+    examsState.photoZoom.rotation = 0;
+    applyPhotoZoomTransform();
+    modal.classList.remove('hidden');
+};
+
+function applyPhotoZoomTransform() {
+    const img = document.getElementById('photo-zoom-img');
+    if (!img) return;
+    img.style.transform = `scale(${examsState.photoZoom.scale}) rotate(${examsState.photoZoom.rotation}deg)`;
+}
+
+// 9. Dashboard QR Modal
+window.openExamQrModal = function(examCode, title) {
+    const modal = document.getElementById('exam-qr-modal');
+    const titleEl = document.getElementById('dash-qr-title');
+    const codeEl = document.getElementById('dash-qr-code');
+    const container = document.getElementById('dash-qr-container');
+    const downloadBtn = document.getElementById('btn-download-dash-qr');
+    if (!modal) return;
+
+    if (titleEl) titleEl.textContent = title || "Exam QR Code";
+    if (codeEl) codeEl.textContent = examCode;
+    const origin = window.location.origin;
+    const examUrl = `${origin}/exam/${examCode}`;
+
+    if (container) {
+        container.innerHTML = `<img src="/api/exams/${examCode}/qr" alt="QR Code" class="w-full h-full object-contain">`;
+    }
+
+    if (downloadBtn) {
+        downloadBtn.onclick = async () => {
+            try {
+                const res = await fetch(`/api/exams/${examCode}/qr`);
+                const svgText = await res.text();
+                const blob = new Blob([svgText], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${examCode}-qr.svg`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                showToast("Download failed: " + err.message, "error");
+            }
+        };
+    }
+
+    modal.classList.remove('hidden');
+};
+
+// 10. Initialization & Event Listeners Attachment
+function initExamsStudio() {
+    // Navigation tabs
+    document.getElementById('nav-tab-bank')?.addEventListener('click', () => {
+        window.location.hash = '#bank';
+    });
+    document.getElementById('nav-tab-exams')?.addEventListener('click', () => {
+        window.location.hash = '#exams';
+    });
+
+    // Cart "Generate Digital Exam" button
+    document.getElementById('btn-generate-exam')?.addEventListener('click', openExamSetupModal);
+
+    // Dashboard create exam button
+    document.getElementById('btn-dashboard-create-exam')?.addEventListener('click', () => {
+        if (!state.cart || state.cart.length === 0) {
+            showToast("Your cart is empty. Add questions from the Question Bank first.", "info");
+            window.location.hash = '#bank';
+            return;
+        }
+        openExamSetupModal();
+    });
+
+    // Refresh buttons
+    document.getElementById('btn-refresh-exams')?.addEventListener('click', loadExamsList);
+    document.getElementById('btn-refresh-submissions')?.addEventListener('click', () => {
+        if (examsState.activeExamId) loadSubmissionsList(examsState.activeExamId);
+    });
+    document.getElementById('filter-exam-status')?.addEventListener('change', loadExamsList);
+
+    // Back to exams
+    document.getElementById('btn-back-to-exams')?.addEventListener('click', () => {
+        window.location.hash = '#exams';
+    });
+
+    // Exam setup modal events
+    document.getElementById('close-exam-setup-modal')?.addEventListener('click', () => {
+        document.getElementById('exam-setup-modal')?.classList.add('hidden');
+    });
+    document.getElementById('cancel-exam-setup-btn')?.addEventListener('click', () => {
+        document.getElementById('exam-setup-modal')?.classList.add('hidden');
+    });
+    document.getElementById('marks-mode-equal')?.addEventListener('change', renderSetupMarksAllocation);
+    document.getElementById('marks-mode-custom')?.addEventListener('change', renderSetupMarksAllocation);
+    document.getElementById('setup-equal-marks-val')?.addEventListener('input', renderSetupMarksAllocation);
+    document.getElementById('exam-setup-form')?.addEventListener('submit', handlePublishExam);
+
+    // Success popup events
+    document.getElementById('btn-copy-exam-link')?.addEventListener('click', () => {
+        const urlInput = document.getElementById('success-exam-url');
+        if (urlInput) {
+            navigator.clipboard.writeText(urlInput.value).then(() => {
+                const icon = document.getElementById('copy-btn-icon');
+                const text = document.getElementById('copy-btn-text');
+                if (icon) icon.textContent = '✓';
+                if (text) text.textContent = 'Copied!';
+                setTimeout(() => {
+                    if (icon) icon.textContent = '📋';
+                    if (text) text.textContent = 'Copy';
+                }, 2000);
+            });
+        }
+    });
+    document.getElementById('btn-success-to-dashboard')?.addEventListener('click', () => {
+        document.getElementById('exam-success-modal')?.classList.add('hidden');
+        window.location.hash = '#exams';
+    });
+
+    // Grading modal events
+    document.getElementById('close-grading-modal')?.addEventListener('click', () => {
+        document.getElementById('grading-workspace-modal')?.classList.add('hidden');
+    });
+    document.getElementById('btn-cancel-grading')?.addEventListener('click', () => {
+        document.getElementById('grading-workspace-modal')?.classList.add('hidden');
+    });
+    document.getElementById('btn-publish-evaluation')?.addEventListener('click', handlePublishEvaluation);
+
+    // Photo zoom modal events
+    document.getElementById('close-photo-zoom-modal')?.addEventListener('click', () => {
+        document.getElementById('photo-zoom-modal')?.classList.add('hidden');
+    });
+    document.getElementById('btn-photo-zoom-in')?.addEventListener('click', () => {
+        examsState.photoZoom.scale = Math.min(3.0, examsState.photoZoom.scale + 0.25);
+        applyPhotoZoomTransform();
+    });
+    document.getElementById('btn-photo-zoom-out')?.addEventListener('click', () => {
+        examsState.photoZoom.scale = Math.max(0.5, examsState.photoZoom.scale - 0.25);
+        applyPhotoZoomTransform();
+    });
+    document.getElementById('btn-photo-rotate')?.addEventListener('click', () => {
+        examsState.photoZoom.rotation = (examsState.photoZoom.rotation + 90) % 360;
+        applyPhotoZoomTransform();
+    });
+    document.getElementById('btn-photo-reset')?.addEventListener('click', () => {
+        examsState.photoZoom.scale = 1.0;
+        examsState.photoZoom.rotation = 0;
+        applyPhotoZoomTransform();
+    });
+
+    // Dashboard QR modal events
+    document.getElementById('close-exam-qr-modal')?.addEventListener('click', () => {
+        document.getElementById('exam-qr-modal')?.classList.add('hidden');
+    });
+
+    // Keyboard Esc shortcut
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            document.getElementById('photo-zoom-modal')?.classList.add('hidden');
+            document.getElementById('exam-qr-modal')?.classList.add('hidden');
+        }
+    });
+
+    // Initial route check
+    handleHashRoute();
+}
+
+// Automatically initialize exams studio when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initExamsStudio);
+} else {
+    initExamsStudio();
+}

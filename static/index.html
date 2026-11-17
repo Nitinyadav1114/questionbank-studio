@@ -67,6 +67,19 @@
                 </div>
             </div>
 
+            <!-- View Navigation Tabs: Question Bank vs Exams Studio -->
+            <nav class="flex items-center space-x-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                <button id="nav-tab-bank" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-brand-700 dark:text-brand-300 bg-white dark:bg-slate-700 shadow-xs flex items-center space-x-1.5 cursor-pointer">
+                    <span>📚</span>
+                    <span class="hidden sm:inline">Question Bank</span>
+                </button>
+                <button id="nav-tab-exams" class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center space-x-1.5 cursor-pointer">
+                    <span>📝</span>
+                    <span>Exams</span>
+                    <span id="nav-exams-badge" class="hidden px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-extrabold rounded-full"></span>
+                </button>
+            </nav>
+
             <!-- Navbar Actions: Cart Pill & User Profile Pill (Circular on mobile, Pill on desktop) -->
             <div class="flex items-center space-x-2 sm:space-x-3">
                 <!-- Cart Button -->
@@ -158,7 +171,8 @@
 
     <!-- Main Content Container -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
-
+        <!-- Question Bank View -->
+        <div id="bank-view" class="space-y-8">
         <!-- Upload & Extraction Section -->
         <section class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 p-6 shadow-sm transition-colors duration-150">
             <div class="flex items-center justify-between mb-4">
@@ -377,6 +391,100 @@
                 </div>
             </div>
         </section>
+        </div><!-- /#bank-view -->
+
+        <!-- Exams Studio View -->
+        <div id="exams-view" class="space-y-8 hidden">
+            <!-- 1. Exams Dashboard Subview -->
+            <div id="exams-dashboard-view" class="space-y-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-lg sm:text-xl font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                            <span>📝</span>
+                            <span>Digital Exams Studio</span>
+                        </h2>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">Create interactive online exams, share QR/links with students, and evaluate submissions.</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button id="btn-refresh-exams" class="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer flex items-center space-x-1">
+                            <span>🔄</span>
+                            <span>Refresh</span>
+                        </button>
+                        <button id="btn-dashboard-create-exam" class="px-4 py-2 text-xs font-semibold rounded-xl bg-brand-600 hover:bg-brand-700 text-white transition shadow-sm shadow-brand-500/20 active:scale-95 cursor-pointer flex items-center space-x-1.5">
+                            <span>🚀</span>
+                            <span>Create Exam from Cart</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stat Cards -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-400">Total Exams</p>
+                        <p id="stat-total-exams" class="text-2xl font-bold text-slate-900 dark:text-white mt-1">0</p>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-500">Active Exams</p>
+                        <p id="stat-active-exams" class="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">0</p>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-400">Submissions</p>
+                        <p id="stat-total-submissions" class="text-2xl font-bold text-slate-900 dark:text-white mt-1">0</p>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-amber-500">Pending Grading</p>
+                        <p id="stat-pending-grading" class="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">0</p>
+                    </div>
+                </div>
+
+                <!-- Exams List Table / Cards -->
+                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 overflow-hidden shadow-xs">
+                    <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700/80 flex items-center justify-between">
+                        <h3 class="text-sm font-bold text-slate-900 dark:text-white">Created Exams</h3>
+                        <div class="flex items-center space-x-2">
+                            <select id="filter-exam-status" class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200">
+                                <option value="">All Statuses</option>
+                                <option value="active">Active Only</option>
+                                <option value="closed">Closed Only</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="exams-table-container" class="overflow-x-auto">
+                        <!-- Populated by renderExamsList() -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Submissions & Grading Studio Subview -->
+            <div id="submissions-subview" class="space-y-6 hidden">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div class="flex items-center space-x-3">
+                        <button id="btn-back-to-exams" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer text-slate-600 dark:text-slate-300 font-semibold text-xs flex items-center space-x-1" title="Back to Exams">
+                            <span>←</span>
+                            <span>Back to Exams</span>
+                        </button>
+                        <div>
+                            <div class="flex items-center space-x-2">
+                                <span id="sub-view-code-badge" class="px-2 py-0.5 text-xs font-mono font-bold bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 rounded-md border border-brand-200 dark:border-brand-800">CODE</span>
+                                <h2 id="sub-view-title" class="text-lg font-bold text-slate-900 dark:text-white">Exam Title</h2>
+                            </div>
+                            <p id="sub-view-meta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Subject • Total Marks: 50 • Duration: 60 min</p>
+                        </div>
+                    </div>
+                    <button id="btn-refresh-submissions" class="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer flex items-center space-x-1">
+                        <span>🔄</span>
+                        <span>Refresh Submissions</span>
+                    </button>
+                </div>
+
+                <!-- Submissions Table -->
+                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 overflow-hidden shadow-xs">
+                    <div id="submissions-table-container" class="overflow-x-auto">
+                        <!-- Populated by renderSubmissionsList() -->
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <!-- Cart Drawer Modal / Backdrop -->
@@ -440,8 +548,12 @@
 
         <!-- Drawer Footer / Actions -->
         <div class="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/80 space-y-3">
+            <button id="btn-generate-exam" type="button" class="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md shadow-brand-500/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm">
+                <span>🚀</span>
+                <span>Generate Digital Exam</span>
+            </button>
             <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span class="font-medium text-slate-700 dark:text-slate-300">Choose Export Format:</span>
+                <span class="font-medium text-slate-700 dark:text-slate-300">Or Download Document:</span>
                 <button id="clear-cart-btn" class="text-rose-600 dark:text-rose-400 hover:text-rose-700 font-semibold hover:underline cursor-pointer">Clear Cart</button>
             </div>
             <div class="grid grid-cols-2 gap-2">
@@ -639,6 +751,219 @@
         </div>
     </div>
 
+    <!-- Exam Setup Modal -->
+    <div id="exam-setup-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700/80 pb-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-xl">🚀</span>
+                    <h3 class="text-base font-bold text-slate-900 dark:text-white">Configure Digital Exam</h3>
+                </div>
+                <button type="button" id="close-exam-setup-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 text-lg leading-none cursor-pointer">&times;</button>
+            </div>
+
+            <form id="exam-setup-form" class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Exam Title *</label>
+                        <input type="text" id="setup-exam-title" required placeholder="e.g. Grade 10 English Literature Midterm" class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Subject</label>
+                        <input type="text" id="setup-exam-subject" placeholder="e.g. English Literature" class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Duration (Minutes) *</label>
+                        <input type="number" id="setup-exam-duration" min="5" max="360" value="60" required class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Scheduled Deadline (Date & Time) *</label>
+                        <input type="datetime-local" id="setup-exam-deadline" required class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <p class="text-[11px] text-slate-400 mt-0.5">Students cannot start or submit after this deadline expires.</p>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Instructions for Students</label>
+                        <textarea id="setup-exam-instructions" rows="2.5" class="w-full text-xs px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 leading-relaxed" placeholder="1. Answer all questions.&#10;2. You can type answers or upload clear photos of your handwritten sheets.&#10;3. Click Submit before the countdown timer hits 00:00."></textarea>
+                    </div>
+                </div>
+
+                <!-- Marks Allocation -->
+                <div class="border border-slate-200 dark:border-slate-700/80 rounded-xl p-3.5 bg-slate-50 dark:bg-slate-900/40 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">Marks Allocation</span>
+                        <span class="text-xs font-extrabold text-brand-600 dark:text-brand-400">Total Marks: <span id="setup-total-marks-label">0</span> pts</span>
+                    </div>
+                    <div class="flex items-center space-x-4 text-xs">
+                        <label class="inline-flex items-center space-x-1.5 cursor-pointer">
+                            <input type="radio" name="marks-mode" value="equal" id="marks-mode-equal" checked class="text-brand-600 focus:ring-brand-500">
+                            <span>Equal marks per question</span>
+                        </label>
+                        <label class="inline-flex items-center space-x-1.5 cursor-pointer">
+                            <input type="radio" name="marks-mode" value="custom" id="marks-mode-custom" class="text-brand-600 focus:ring-brand-500">
+                            <span>Custom marks per question</span>
+                        </label>
+                    </div>
+                    <div id="equal-marks-container" class="flex items-center space-x-2 pt-1">
+                        <label class="text-xs text-slate-600 dark:text-slate-400">Marks per question:</label>
+                        <input type="number" id="setup-equal-marks-val" min="0.5" step="0.5" value="5" class="w-20 text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold text-center">
+                    </div>
+                    <div id="custom-marks-container" class="hidden space-y-2 pt-1 max-h-48 overflow-y-auto">
+                        <!-- Populated with question cards & marks inputs -->
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-slate-700/80">
+                    <button type="button" id="cancel-exam-setup-btn" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
+                    <button type="submit" id="btn-publish-exam-submit" class="px-5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white shadow-md shadow-brand-500/20 active:scale-95 cursor-pointer flex items-center space-x-1.5">
+                        <span>Publish Exam 🚀</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Exam Success Popup Modal -->
+    <div id="exam-success-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 dark:border-slate-700 text-center space-y-5 animate-in fade-in zoom-in duration-200">
+            <div class="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-3xl shadow-xs">
+                ✓
+            </div>
+            <div>
+                <h3 class="text-xl font-bold text-slate-900 dark:text-white">Digital Exam Published!</h3>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Students can now join the exam room via the link or QR code.</p>
+            </div>
+
+            <!-- Exam Code Badge -->
+            <div class="bg-slate-50 dark:bg-slate-900/80 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-700">
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Exam Code</p>
+                <p id="success-exam-code" class="text-2xl font-mono font-extrabold text-brand-600 dark:text-brand-400 tracking-wider mt-0.5">ENG-2026-X9A</p>
+            </div>
+
+            <!-- Full Link & Copy -->
+            <div class="space-y-1.5 text-left">
+                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Exam Room URL</label>
+                <div class="flex items-center space-x-2">
+                    <input type="text" id="success-exam-url" readonly class="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono text-slate-800 dark:text-slate-200 select-all">
+                    <button type="button" id="btn-copy-exam-link" class="px-3.5 py-2.5 text-xs font-bold rounded-xl bg-brand-600 hover:bg-brand-700 text-white transition active:scale-95 cursor-pointer shrink-0 flex items-center space-x-1">
+                        <span id="copy-btn-icon">📋</span>
+                        <span id="copy-btn-text">Copy</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Vector QR Code -->
+            <div class="space-y-2">
+                <div id="success-qr-container" class="w-48 h-48 mx-auto p-2 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-center overflow-hidden">
+                    <!-- SVG QR code inserted here -->
+                </div>
+                <div class="flex items-center justify-center space-x-3">
+                    <button type="button" id="btn-download-qr" class="text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center space-x-1 cursor-pointer">
+                        <span>⬇ Download QR</span>
+                    </button>
+                    <span class="text-slate-300 dark:text-slate-700">•</span>
+                    <a id="btn-whatsapp-share" href="#" target="_blank" class="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 flex items-center space-x-1">
+                        <span>💬 Share via WhatsApp</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="flex items-center justify-center space-x-3 pt-2 border-t border-slate-100 dark:border-slate-700">
+                <a id="btn-open-exam-room" href="#" target="_blank" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                    Open Student View ↗
+                </a>
+                <button type="button" id="btn-success-to-dashboard" class="px-5 py-2 rounded-xl text-xs font-bold bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 transition cursor-pointer">
+                    View in Dashboard
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Submissions & Grading Studio Modal -->
+    <div id="grading-workspace-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3 sm:p-5">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-4xl w-full h-[92vh] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+            <!-- Modal Header -->
+            <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-700/80 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between shrink-0">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span id="grade-student-name" class="font-bold text-base sm:text-lg text-slate-900 dark:text-white">Student Name</span>
+                        <span id="grade-roll-badge" class="px-2 py-0.5 text-xs font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md">ROLL-001</span>
+                        <span id="grade-section-badge" class="px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-md">Section A</span>
+                    </div>
+                    <p id="grade-exam-meta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Exam Title • Submitted at ... • Time taken: 45m</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <div class="text-right">
+                        <span class="text-[10px] uppercase font-bold text-slate-400 block">Total Score</span>
+                        <span class="text-base sm:text-lg font-mono font-extrabold text-brand-600 dark:text-brand-400"><span id="live-awarded-score">0</span> / <span id="grade-max-score">50</span></span>
+                    </div>
+                    <button type="button" id="close-grading-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 text-xl leading-none cursor-pointer">&times;</button>
+                </div>
+            </div>
+
+            <!-- Scrollable Questions Review Body -->
+            <div id="grading-questions-container" class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+                <!-- Dynamically populated per-question cards with typed answers, zoomable images, marks input, feedback -->
+            </div>
+
+            <!-- Footer: Overall Feedback & Publish Button -->
+            <div class="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 shrink-0 space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Overall Teacher Feedback for Student</label>
+                    <input type="text" id="grade-overall-feedback" placeholder="e.g. Excellent dramatic analysis, keep an eye on spelling in question 3." class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                </div>
+                <div class="flex items-center justify-between">
+                    <span id="grading-save-indicator" class="text-xs text-slate-400">All marks calculated live</span>
+                    <div class="flex items-center space-x-2">
+                        <button type="button" id="btn-cancel-grading" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
+                        <button type="button" id="btn-publish-evaluation" class="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-500/20 active:scale-95 cursor-pointer flex items-center space-x-1.5">
+                            <span>Publish Evaluation & Marks 🚀</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Photo Answer Sheet Zoom / Lightbox Modal -->
+    <div id="photo-zoom-modal" class="fixed inset-0 bg-slate-955/90 bg-slate-950/90 backdrop-blur-md z-[60] hidden flex flex-col p-3 sm:p-6">
+        <div class="flex items-center justify-between text-white pb-3 shrink-0">
+            <div class="flex items-center space-x-3">
+                <span class="text-sm font-bold" id="photo-zoom-title">Handwritten Answer Sheet</span>
+                <span class="text-xs text-slate-400" id="photo-zoom-subtitle"></span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button type="button" id="btn-photo-zoom-in" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer" title="Zoom In (+)">➕</button>
+                <button type="button" id="btn-photo-zoom-out" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer" title="Zoom Out (-)">➖</button>
+                <button type="button" id="btn-photo-rotate" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer" title="Rotate 90°">🔄 90°</button>
+                <button type="button" id="btn-photo-reset" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium cursor-pointer">Reset</button>
+                <button type="button" id="close-photo-zoom-modal" class="p-2 text-2xl leading-none text-slate-400 hover:text-white cursor-pointer ml-3">&times;</button>
+            </div>
+        </div>
+        <div class="flex-1 overflow-auto flex items-center justify-center p-2 select-none" id="photo-zoom-viewport">
+            <img id="photo-zoom-img" src="" alt="Student Answer Sheet" class="max-w-none transition-transform duration-150 origin-center cursor-grab active:cursor-grabbing rounded-lg shadow-2xl">
+        </div>
+    </div>
+
+    <!-- Dashboard QR Code Modal -->
+    <div id="exam-qr-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700 animate-in fade-in zoom-in duration-150">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
+                <h4 id="dash-qr-title" class="text-sm font-bold text-slate-900 dark:text-white truncate">Exam QR Code</h4>
+                <button type="button" id="close-exam-qr-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 text-lg leading-none cursor-pointer">&times;</button>
+            </div>
+            <p id="dash-qr-code" class="text-lg font-mono font-bold text-brand-600 dark:text-brand-400">ENG-2026-X9A</p>
+            <div id="dash-qr-container" class="w-52 h-52 mx-auto p-2 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-center overflow-hidden">
+                <!-- SVG inserted -->
+            </div>
+            <div class="flex items-center justify-center space-x-2 pt-2">
+                <button type="button" id="btn-download-dash-qr" class="px-4 py-2 text-xs font-bold rounded-xl bg-brand-600 hover:bg-brand-700 text-white transition cursor-pointer">
+                    ⬇ Download SVG
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Login & Authentication Lock Overlay -->
     <div id="auth-lock-overlay" class="fixed inset-0 bg-slate-900/80 dark:bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
         <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center border border-slate-100 dark:border-slate-700 animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
@@ -676,6 +1001,6 @@
     </div>
 
     <!-- Application Script -->
-    <script src="/static/app.js?v=3.3.0"></script>
+    <script src="/static/app.js?v=3.4.0"></script>
 </body>
 </html>

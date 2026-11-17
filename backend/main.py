@@ -2,7 +2,7 @@ import os
 import re
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Depends, Header
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
@@ -10,6 +10,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics import renderSVG
 
 from backend.database import Database
 from backend.models import (
@@ -25,7 +28,13 @@ from backend.models import (
     TokenResponse,
     UserCreate,
     ChangePasswordRequest,
-    ResetPasswordRequest
+    ResetPasswordRequest,
+    ExamCreateRequest,
+    ExamQuestionInput,
+    StudentSubmissionRequest,
+    StudentAnswerInput,
+    QuestionGradeInput,
+    GradeSubmissionRequest
 )
 from backend.services.parser import extract_questions_from_file
 from backend.services.dedup import clean_question_text, normalize_question_text
@@ -702,6 +711,321 @@ async def upload_custom_template(file: UploadFile = File(...)):
         "filename": file.filename
     }
 
+# ==========================================
+# Digital Exams & Evaluation Studio Endpoints
+# ==========================================
+
+def generate_qr_svg(url: str, size: int = 200) -> str:
+    """Generates pure vector SVG QR code using installed reportlab."""
+    qr_widget = QrCodeWidget(url)
+    bounds = qr_widget.getBounds()
+    width = bounds[2] - bounds[0]
+    height = bounds[3] - bounds[1]
+    drawing = Drawing(size, size, transform=[size / width, 0, 0, size / height, 0, 0])
+    drawing.add(qr_widget)
+    return renderSVG.drawToString(drawing)
+
+def parse_iso_datetime(dt_str: str) -> datetime:
+    """Parses ISO-like datetime string, handling trailing Z or missing tz."""
+    clean_str = dt_str.strip()
+    if clean_str.endswith("Z"):
+        clean_str = clean_str[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(clean_str)
+    except Exception:
+        for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(clean_str, fmt)
+                break
+            except Exception:
+                pass
+        else:
+            raise ValueError(f"Invalid datetime format: {dt_str}")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+@app.post("/api/exams")
+def create_exam(
+    payload: ExamCreateRequest,
+    request: Request,
+    current_user: dict = Depends(verify_auth)
+):
+    """Creates a new digital exam with snapshot questions."""
+    try:
+        parse_iso_datetime(payload.deadline)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid deadline format: {e}")
+
+    questions_data = [
+        {
+            "question_id": q.question_id,
+            "question_text": q.question_text,
+            "marks": q.marks,
+            "question_order": q.question_order or (idx + 1)
+        }
+        for idx, q in enumerate(payload.questions)
+    ]
+
+    created_by_id = current_user.get("user_id") if isinstance(current_user, dict) else None
+    exam = db.create_exam(
+        title=payload.title,
+        subject=payload.subject or "",
+        duration_minutes=payload.duration_minutes,
+        deadline=payload.deadline,
+        instructions=payload.instructions or "",
+        total_marks=payload.total_marks,
+        questions=questions_data,
+        created_by=created_by_id
+    )
+
+    base_url = str(request.base_url).rstrip('/')
+    exam_url = f"{base_url}/exam/{exam['exam_code']}"
+    qr_svg = generate_qr_svg(exam_url, size=200)
+
+    exam["exam_url"] = exam_url
+    exam["qr_svg"] = qr_svg
+    return exam
+
+
+@app.get("/api/exams")
+def list_exams(
+    status: Optional[str] = Query(None, description="Filter by status ('active' or 'closed')"),
+    limit: int = Query(50, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    current_user: dict = Depends(verify_auth)
+):
+    """Lists exams with questions count, submissions count, and pending grading count."""
+    return db.get_exams(status=status, limit=limit, page=page)
+
+
+@app.get("/api/exams/{code}")
+def get_public_exam(code: str):
+    """Public metadata endpoint for student exam room."""
+    exam = db.get_exam_by_code(code, include_questions=True)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    return {
+        "id": exam["id"],
+        "exam_code": exam["exam_code"],
+        "title": exam["title"],
+        "subject": exam["subject"],
+        "duration_minutes": exam["duration_minutes"],
+        "deadline": exam["deadline"],
+        "total_marks": exam["total_marks"],
+        "instructions": exam["instructions"],
+        "status": exam["status"],
+        "questions_count": exam["questions_count"],
+        "questions": [
+            {
+                "id": q["id"],
+                "question_order": q["question_order"],
+                "question_text": q["question_text"],
+                "marks": q["marks"]
+            }
+            for q in exam["questions"]
+        ]
+    }
+
+
+@app.post("/api/exams/{code}/submit")
+def submit_exam_answers(code: str, payload: StudentSubmissionRequest):
+    """Public student submission endpoint with deadline and duplicate enforcement."""
+    exam = db.get_exam_by_code(code, include_questions=False)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    if exam["status"] != "active":
+        raise HTTPException(status_code=400, detail="Submission rejected: Exam is not currently active.")
+
+    # Deadline validation with 2-minute grace window for clock skew & latency
+    try:
+        deadline_dt = parse_iso_datetime(exam["deadline"])
+        now_utc = datetime.now(timezone.utc)
+        grace_period = timedelta(seconds=120)
+        if now_utc > (deadline_dt + grace_period):
+            raise HTTPException(status_code=400, detail="Submission rejected: Exam deadline has passed.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    try:
+        student_name = payload.get_student_name()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    answers_data = [
+        {
+            "question_id": a.question_id,
+            "typed_answer": a.typed_answer or "",
+            "image_data": a.image_data or ""
+        }
+        for a in payload.answers
+    ]
+
+    try:
+        sub = db.create_submission(
+            exam_id=exam["id"],
+            student_name=student_name,
+            roll_number=payload.roll_number,
+            section=payload.section or "",
+            time_taken_seconds=payload.time_taken_seconds,
+            answers=answers_data
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "submission_id": sub["submission_id"],
+        "exam_code": code,
+        "student_name": student_name,
+        "roll_number": sub["roll_number"],
+        "submitted_at": sub["submitted_at"],
+        "time_taken_seconds": sub["time_taken_seconds"],
+        "status": "submitted",
+        "message": "Submission recorded successfully."
+    }
+
+
+@app.get("/api/exams/{code}/result")
+def get_student_result(code: str, roll_number: str = Query(..., description="Student roll number or ID")):
+    """Public student result lookup by roll number."""
+    exam = db.get_exam_by_code(code, include_questions=False)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    sub = db.get_submission_by_exam_and_roll(exam["id"], roll_number)
+    if not sub:
+        raise HTTPException(status_code=404, detail=f"No submission found for roll number '{roll_number}' in this exam.")
+
+    if sub.get("status") != "graded":
+        return {
+            "status": "pending_evaluation",
+            "submission_id": sub["id"],
+            "student_name": sub["student_name"],
+            "roll_number": sub["roll_number"],
+            "section": sub.get("section", ""),
+            "submitted_at": sub["submitted_at"],
+            "time_taken_seconds": sub.get("time_taken_seconds", 0),
+            "message": "Your submission has been recorded and is currently awaiting instructor evaluation."
+        }
+
+    return {
+        "status": "published",
+        "submission_id": sub["id"],
+        "student_name": sub["student_name"],
+        "roll_number": sub["roll_number"],
+        "section": sub.get("section", ""),
+        "submitted_at": sub["submitted_at"],
+        "time_taken_seconds": sub.get("time_taken_seconds", 0),
+        "total_score": sub["total_score"],
+        "total_marks": sub["total_marks"],
+        "percentage": sub["percentage"],
+        "feedback": sub.get("feedback", ""),
+        "graded_at": sub.get("graded_at"),
+        "questions": sub.get("questions", [])
+    }
+
+
+@app.get("/api/exams/{id}/submissions")
+def list_exam_submissions(id: int, current_user: dict = Depends(verify_auth)):
+    """Teacher lists all student submissions for an exam."""
+    exam = db.get_exam_by_id(id, include_questions=False)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    submissions = db.get_submissions_for_exam(id)
+    return {
+        "exam": exam,
+        "submissions": submissions,
+        "total": len(submissions)
+    }
+
+
+@app.get("/api/submissions/{sub_id}")
+def get_submission_detail(sub_id: int, current_user: dict = Depends(verify_auth)):
+    """Teacher views detailed submission answer sheets for grading."""
+    sub = db.get_submission_detail(sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    return sub
+
+
+@app.post("/api/submissions/{sub_id}/grade")
+def grade_submission(
+    sub_id: int,
+    payload: GradeSubmissionRequest,
+    current_user: dict = Depends(verify_auth)
+):
+    """Teacher publishes grades, question feedback, and overall evaluation."""
+    sub = db.get_submission_detail(sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+
+    grades_data = [
+        {
+            "question_id": g.get_question_id(),
+            "marks_awarded": g.get_marks(),
+            "feedback": g.get_feedback()
+        }
+        for g in payload.get_grades_list()
+    ]
+
+    graded_by_id = current_user.get("user_id") if isinstance(current_user, dict) else None
+    updated = db.grade_submission(
+        submission_id=sub_id,
+        grades=grades_data,
+        overall_feedback=payload.overall_feedback or "",
+        graded_by=graded_by_id
+    )
+
+    return {
+        "message": "Grade and evaluation published successfully.",
+        "submission": updated
+    }
+
+
+@app.patch("/api/exams/{id}/toggle")
+def toggle_exam_status(id: int, current_user: dict = Depends(verify_auth)):
+    """Toggles exam status between active and closed."""
+    new_status = db.toggle_exam_status(id)
+    if not new_status:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    return {
+        "id": id,
+        "status": new_status,
+        "message": f"Exam status updated to {new_status}."
+    }
+
+
+@app.delete("/api/exams/{id}")
+def delete_exam(id: int, current_user: dict = Depends(verify_auth)):
+    """Deletes an exam and cascades deletion to questions and submissions."""
+    deleted = db.delete_exam(id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    return {
+        "id": id,
+        "message": "Exam deleted successfully."
+    }
+
+
+@app.get("/api/exams/{code}/qr")
+def get_exam_qr_code(code: str, request: Request):
+    """Generates and returns vector SVG QR code for an exam link."""
+    exam = db.get_exam_by_code(code, include_questions=False)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    base_url = str(request.base_url).rstrip('/')
+    exam_url = f"{base_url}/exam/{code}"
+    svg_content = generate_qr_svg(exam_url, size=240)
+    return Response(content=svg_content, media_type="image/svg+xml")
+
+
 # Static files with performance caching headers
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
@@ -725,3 +1049,17 @@ def serve_index():
         response.headers["Expires"] = "0"
         return response
     return {"message": "Question Bank API is running. Static UI not found."}
+
+
+@app.get("/exam/{exam_code}")
+@app.get("/exam/{exam_code}/")
+def serve_exam_room(exam_code: str):
+    """Serves the distraction-free student exam room."""
+    exam_html_path = os.path.join(STATIC_DIR, "exam.html")
+    if os.path.exists(exam_html_path):
+        response = FileResponse(exam_html_path)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+    return JSONResponse(status_code=404, content={"detail": "Exam room UI not found."})
