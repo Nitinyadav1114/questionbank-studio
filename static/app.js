@@ -830,6 +830,17 @@ async function handleBackupLibrary() {
     }
 }
 
+async function handleFullSystemBackup() {
+    try {
+        const token = sessionStorage.getItem('qb_token');
+        const url = token ? `/api/admin/backup?auth_token=${encodeURIComponent(token)}` : '/api/admin/backup';
+        showToast("Generating complete disaster recovery system backup...", "info", 2500);
+        window.location.href = url;
+    } catch (e) {
+        showToast("Failed to download system backup: " + e.message, "error");
+    }
+}
+
 async function handleRestoreFileSelected(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -991,6 +1002,14 @@ function setupEventListeners() {
     saveAddBtn.addEventListener('click', handleSaveManualQuestion);
 
     // Backup & Restore Events (Inside User Dropdown)
+    const btnFullSystemBackup = document.getElementById('btn-full-system-backup');
+    if (btnFullSystemBackup) {
+        btnFullSystemBackup.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+            handleFullSystemBackup();
+        });
+    }
     if (btnBackupLibrary) {
         btnBackupLibrary.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2638,7 +2657,8 @@ function renderSubmissionsTable(submissions, exam) {
                     return `
                         <tr class="hover:bg-slate-50/75 dark:hover:bg-slate-700/30 transition-colors">
                             <td class="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-white">
-                                ${escapeHtml(s.roll_number)}
+                                <div>${escapeHtml(s.roll_number)}</div>
+                                ${s.is_emergency ? `<span class="inline-flex items-center space-x-1 mt-0.5 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-[10px] font-sans font-bold"><span>⚠️</span><span>Emergency Import</span></span>` : ''}
                             </td>
                             <td class="py-3.5 px-4 font-semibold text-slate-800 dark:text-slate-200">
                                 ${escapeHtml(s.student_name)}
@@ -2708,7 +2728,11 @@ window.openGradingStudio = async function(submissionId) {
             secBadge.textContent = sub.section ? `Section: ${sub.section}` : '';
             secBadge.style.display = sub.section ? 'inline-block' : 'none';
         }
-        document.getElementById('grade-exam-meta').textContent = `${sub.exam_title} • Submitted: ${new Date(sub.submitted_at).toLocaleString()} • Duration: ${Math.floor(sub.time_taken_seconds/60)}m ${sub.time_taken_seconds%60}s`;
+        let metaText = `${sub.exam_title} • Submitted: ${new Date(sub.submitted_at).toLocaleString()} • Duration: ${Math.floor(sub.time_taken_seconds/60)}m ${sub.time_taken_seconds%60}s`;
+        if (sub.is_emergency) {
+            metaText += ' • ⚠️ Offline Emergency Import (Verified)';
+        }
+        document.getElementById('grade-exam-meta').textContent = metaText;
         document.getElementById('grade-max-score').textContent = sub.total_marks;
         document.getElementById('grade-overall-feedback').value = sub.feedback || '';
 
@@ -2964,6 +2988,50 @@ function initExamsStudio() {
     document.getElementById('btn-refresh-submissions')?.addEventListener('click', () => {
         if (examsState.activeExamId) loadSubmissionsList(examsState.activeExamId);
     });
+
+    // Emergency offline submission import (.squire)
+    const btnImportEmergencySub = document.getElementById('btn-import-emergency-sub');
+    const emergencyFileInput = document.getElementById('emergency-file-input');
+    if (btnImportEmergencySub && emergencyFileInput) {
+        btnImportEmergencySub.addEventListener('click', () => {
+            emergencyFileInput.value = '';
+            emergencyFileInput.click();
+        });
+
+        emergencyFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+
+            try {
+                showToast("Reading emergency submission file...", "info", 1500);
+                const text = await file.text();
+                const payload = JSON.parse(text);
+
+                if (!payload.exam_code || !payload.roll_number || !payload.integrity_hash) {
+                    throw new Error("Invalid emergency file format. Missing exam_code, roll_number, or integrity_hash.");
+                }
+
+                const res = await apiFetch(`/api/exams/${payload.exam_code}/import-emergency`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.detail || "Failed to import emergency submission.");
+                }
+
+                const result = await res.json();
+                showToast(`Emergency submission for Roll ${result.roll_number} verified and imported!`, "success", 4000);
+                if (examsState.activeExamId) {
+                    loadSubmissionsList(examsState.activeExamId);
+                }
+            } catch (err) {
+                showToast("Import error: " + err.message, "error", 5000);
+            }
+        });
+    }
+
     document.getElementById('filter-exam-status')?.addEventListener('change', loadExamsList);
 
     // Back to exams

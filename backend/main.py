@@ -2,6 +2,9 @@ import os
 import re
 import json
 import secrets
+import asyncio
+import hashlib
+import traceback
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Depends, Header
@@ -34,7 +37,8 @@ from backend.models import (
     StudentSubmissionRequest,
     StudentAnswerInput,
     QuestionGradeInput,
-    GradeSubmissionRequest
+    GradeSubmissionRequest,
+    EmergencySubmissionPayload
 )
 from backend.services.parser import extract_questions_from_file
 from backend.services.dedup import clean_question_text, normalize_question_text
@@ -169,6 +173,44 @@ app.add_middleware(
 
 # GZip compression reduces JSON API payloads, JS, and CSS size by 70%-80% over the wire
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# Worst-Condition Resilience: Concurrency Semaphore & Payload Limit
+SUBMISSION_SEMAPHORE = asyncio.Semaphore(15)
+MAX_REQUEST_BODY_BYTES = 12 * 1024 * 1024  # 12 MB max payload guard
+
+@app.middleware("http")
+async def limit_payload_size(request: Request, call_next):
+    """Enforces a strict 12MB payload ceiling to prevent server memory saturation."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Payload too large: Request exceeds 12MB limit. Please compress photos before uploading."}
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global Sanitized Error Boundary: Prevents database strings/traces leaking to clients."""
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=getattr(exc, "headers", None)
+        )
+    error_id = secrets.token_hex(4)
+    print(f"[Error-Boundary-{error_id}] Unhandled exception at {request.method} {request.url.path}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"An unexpected system condition occurred. Your data has been preserved. Please notify your instructor or support (Error Ref: {error_id})."
+        }
+    )
 
 @app.get("/healthz")
 def health_check():
@@ -653,6 +695,18 @@ def export_backup(request: Request):
         headers={"Content-Disposition": f'attachment; filename="questionbank_backup_{now_str}.json"'}
     )
 
+@app.get("/api/admin/backup", dependencies=[Depends(require_admin)])
+def export_full_system_backup():
+    """Exports a complete disaster recovery backup (questions, exams, submissions, answers) as a JSON archive (Admin only)."""
+    backup_data = db.export_full_backup()
+    now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    content = json.dumps(backup_data, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="squire_way_full_backup_{now_str}.json"'}
+    )
+
 @app.post("/api/restore", dependencies=[Depends(require_admin)])
 async def import_backup(file: UploadFile = File(...)):
     """Restores/merges questions from an uploaded JSON backup file into the active database (Admin only)."""
@@ -802,7 +856,7 @@ def list_exams(
 
 @app.get("/api/exams/{code}")
 def get_public_exam(code: str):
-    """Public metadata endpoint for student exam room."""
+    """Public metadata endpoint for student exam room with server clock synchronization."""
     exam = db.get_exam_by_code(code, include_questions=True)
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found.")
@@ -818,6 +872,7 @@ def get_public_exam(code: str):
         "instructions": exam["instructions"],
         "status": exam["status"],
         "questions_count": exam["questions_count"],
+        "server_now_utc": datetime.now(timezone.utc).isoformat(),
         "questions": [
             {
                 "id": q["id"],
@@ -831,63 +886,144 @@ def get_public_exam(code: str):
 
 
 @app.post("/api/exams/{code}/submit")
-def submit_exam_answers(code: str, payload: StudentSubmissionRequest):
-    """Public student submission endpoint with deadline and duplicate enforcement."""
-    exam = db.get_exam_by_code(code, include_questions=False)
-    if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found.")
+async def submit_exam_answers(code: str, payload: StudentSubmissionRequest):
+    """Public student submission endpoint with concurrency throttle, deadline and duplicate enforcement."""
+    async with SUBMISSION_SEMAPHORE:
+        exam = db.get_exam_by_code(code, include_questions=False)
+        if not exam:
+            raise HTTPException(status_code=404, detail="Exam not found.")
 
-    if exam["status"] != "active":
-        raise HTTPException(status_code=400, detail="Submission rejected: Exam is not currently active.")
+        if exam["status"] != "active":
+            raise HTTPException(status_code=400, detail="Submission rejected: Exam is not currently active.")
 
-    # Deadline validation with 2-minute grace window for clock skew & latency
-    try:
-        deadline_dt = parse_iso_datetime(exam["deadline"])
-        now_utc = datetime.now(timezone.utc)
-        grace_period = timedelta(seconds=120)
-        if now_utc > (deadline_dt + grace_period):
-            raise HTTPException(status_code=400, detail="Submission rejected: Exam deadline has passed.")
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+        # Deadline validation with 5-minute grace window for clock skew & high network latency
+        try:
+            deadline_dt = parse_iso_datetime(exam["deadline"])
+            now_utc = datetime.now(timezone.utc)
+            grace_period = timedelta(seconds=300)
+            if now_utc > (deadline_dt + grace_period):
+                raise HTTPException(status_code=400, detail="Submission rejected: Exam deadline has passed.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
-    try:
-        student_name = payload.get_student_name()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        try:
+            student_name = payload.get_student_name()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-    answers_data = [
-        {
-            "question_id": a.question_id,
-            "typed_answer": a.typed_answer or "",
-            "image_data": a.image_data or ""
+        answers_data = [
+            {
+                "question_id": a.question_id,
+                "typed_answer": a.typed_answer or "",
+                "image_data": a.image_data or ""
+            }
+            for a in payload.answers
+        ]
+
+        try:
+            sub = db.create_submission(
+                exam_id=exam["id"],
+                student_name=student_name,
+                roll_number=payload.roll_number,
+                section=payload.section or "",
+                time_taken_seconds=payload.time_taken_seconds,
+                answers=answers_data
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {
+            "submission_id": sub["submission_id"],
+            "exam_code": code,
+            "student_name": student_name,
+            "roll_number": sub["roll_number"],
+            "submitted_at": sub["submitted_at"],
+            "time_taken_seconds": sub["time_taken_seconds"],
+            "status": "submitted",
+            "message": "Submission recorded successfully."
         }
-        for a in payload.answers
-    ]
 
-    try:
-        sub = db.create_submission(
-            exam_id=exam["id"],
-            student_name=student_name,
-            roll_number=payload.roll_number,
-            section=payload.section or "",
-            time_taken_seconds=payload.time_taken_seconds,
-            answers=answers_data
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
-    return {
-        "submission_id": sub["submission_id"],
-        "exam_code": code,
-        "student_name": student_name,
-        "roll_number": sub["roll_number"],
-        "submitted_at": sub["submitted_at"],
-        "time_taken_seconds": sub["time_taken_seconds"],
-        "status": "submitted",
-        "message": "Submission recorded successfully."
-    }
+@app.post("/api/exams/{code}/import-emergency")
+async def import_emergency_submission(
+    code: str,
+    payload: EmergencySubmissionPayload,
+    current_user: dict = Depends(verify_auth)
+):
+    """
+    Teacher/Admin imports an emergency offline submission package (.squire)
+    created when a student's network failed completely.
+    Validates integrity signature and records submission with audit trail.
+    """
+    async with SUBMISSION_SEMAPHORE:
+        exam = db.get_exam_by_code(code, include_questions=False)
+        if not exam:
+            raise HTTPException(status_code=404, detail="Exam not found.")
+
+        # Validate that payload exam code matches
+        if payload.exam_code.strip().upper() != code.strip().upper():
+            raise HTTPException(status_code=400, detail="Exam code mismatch in emergency package.")
+
+        # Validate integrity hash: sha256(exam_code:roll_number:client_timestamp:num_answers)
+        clean_roll = payload.roll_number.strip().upper()
+        clean_name = payload.student_name.strip()
+        expected_raw = f"{payload.exam_code.strip().upper()}:{clean_roll}:{payload.client_timestamp}:{len(payload.answers)}"
+        computed_hash = hashlib.sha256(expected_raw.encode("utf-8")).hexdigest()
+
+        # Validate integrity signature
+        valid_hash = False
+        if secrets.compare_digest(payload.integrity_hash.lower(), computed_hash.lower()):
+            valid_hash = True
+        else:
+            # Check alternative JSON hash for flexibility
+            answers_json = json.dumps([{"q": a.question_id, "t": a.typed_answer or "", "i": bool(a.image_data)} for a in payload.answers], sort_keys=True)
+            alt_raw = f"{expected_raw}:{answers_json}"
+            alt_hash = hashlib.sha256(alt_raw.encode("utf-8")).hexdigest()
+            if secrets.compare_digest(payload.integrity_hash.lower(), alt_hash.lower()):
+                valid_hash = True
+
+        if not valid_hash:
+            raise HTTPException(
+                status_code=400,
+                detail="Integrity check failed: Emergency file checksum mismatch. This package may have been modified or corrupted."
+            )
+
+        answers_data = [
+            {
+                "question_id": a.question_id,
+                "typed_answer": a.typed_answer or "",
+                "image_data": a.image_data or ""
+            }
+            for a in payload.answers
+        ]
+
+        try:
+            sub = db.create_submission(
+                exam_id=exam["id"],
+                student_name=clean_name,
+                roll_number=clean_roll,
+                section=payload.section or "",
+                time_taken_seconds=payload.time_taken_seconds,
+                answers=answers_data,
+                is_emergency=True,
+                emergency_hash=payload.integrity_hash
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {
+            "submission_id": sub["submission_id"],
+            "exam_code": code,
+            "student_name": clean_name,
+            "roll_number": sub["roll_number"],
+            "submitted_at": sub["submitted_at"],
+            "time_taken_seconds": sub["time_taken_seconds"],
+            "status": "submitted",
+            "is_emergency": True,
+            "message": "Emergency offline submission successfully verified and imported into grading studio."
+        }
 
 
 @app.get("/api/exams/{code}/result")

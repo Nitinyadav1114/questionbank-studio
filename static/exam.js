@@ -20,8 +20,112 @@
         answers: {}, // question_id -> { typed_answer: '', image_data: '', size_bytes: 0 }
         timerInterval: null,
         autoSaveTimeout: null,
-        isSubmitting: false
+        isSubmitting: false,
+        clockSkewMs: 0,
+        retryInterval: null,
+        lastPayloadAnswers: null,
+        lastTimeTakenSecs: 0
     };
+
+    // 0. Resilient IndexedDB Multi-Tier Storage Engine (bypasses mobile 5MB localStorage limit)
+    const IDB_NAME = 'SquireWayExamStore';
+    const IDB_STORE = 'exam_sessions';
+    let idbInstance = null;
+
+    function openExamIDB() {
+        return new Promise((resolve) => {
+            if (!window.indexedDB) return resolve(null);
+            if (idbInstance) return resolve(idbInstance);
+            try {
+                const req = indexedDB.open(IDB_NAME, 1);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(IDB_STORE)) {
+                        db.createObjectStore(IDB_STORE, { keyPath: 'exam_code' });
+                    }
+                };
+                req.onsuccess = (e) => {
+                    idbInstance = e.target.result;
+                    resolve(idbInstance);
+                };
+                req.onerror = () => resolve(null);
+            } catch (e) {
+                resolve(null);
+            }
+        });
+    }
+
+    async function saveSessionToIDB(session) {
+        const db = await openExamIDB();
+        if (!db) return false;
+        return new Promise((resolve) => {
+            try {
+                const tx = db.transaction([IDB_STORE], 'readwrite');
+                const store = tx.objectStore(IDB_STORE);
+                store.put(session);
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => resolve(false);
+            } catch (e) {
+                resolve(false);
+            }
+        });
+    }
+
+    async function loadSessionFromIDB(code) {
+        const db = await openExamIDB();
+        if (!db) return null;
+        return new Promise((resolve) => {
+            try {
+                const tx = db.transaction([IDB_STORE], 'readonly');
+                const store = tx.objectStore(IDB_STORE);
+                const req = store.get(code);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => resolve(null);
+            } catch (e) {
+                resolve(null);
+            }
+        });
+    }
+
+    async function clearSessionFromIDB(code) {
+        const db = await openExamIDB();
+        if (!db) return;
+        try {
+            const tx = db.transaction([IDB_STORE], 'readwrite');
+            tx.objectStore(IDB_STORE).delete(code);
+        } catch (e) {}
+    }
+
+    // 0.1 Live Network Connectivity Monitor
+    function initNetworkMonitor() {
+        const banner = document.getElementById('offline-banner');
+        const bannerText = document.getElementById('offline-banner-text');
+
+        function updateOnlineStatus() {
+            if (!navigator.onLine) {
+                if (banner) {
+                    banner.classList.remove('hidden');
+                    banner.className = "fixed top-3 left-1/2 -translate-x-1/2 z-[70] px-4 py-2 rounded-full bg-amber-600 text-white text-xs font-bold shadow-lg flex items-center space-x-2 animate-bounce pointer-events-none";
+                    if (bannerText) bannerText.textContent = "You are offline. Your answers are safely preserved locally.";
+                }
+                showToast("You are offline. Local auto-save is protecting your work.", "warning", 4000);
+            } else {
+                if (banner && !banner.classList.contains('hidden')) {
+                    banner.className = "fixed top-3 left-1/2 -translate-x-1/2 z-[70] px-4 py-2 rounded-full bg-emerald-600 text-white text-xs font-bold shadow-lg flex items-center space-x-2 pointer-events-none";
+                    if (bannerText) bannerText.textContent = "✓ Back online! Connection restored.";
+                    setTimeout(() => banner.classList.add('hidden'), 2500);
+                }
+            }
+        }
+
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        if (!navigator.onLine) updateOnlineStatus();
+    }
+
+    function getServerNow() {
+        return Date.now() + examState.clockSkewMs;
+    }
 
     // 1. Toast Notification Helper
     function showToast(message, type = 'info', duration = 3000) {
@@ -70,9 +174,9 @@
         });
     }
 
-    // 4. Client-Side Pure HTML5 Canvas Photo Compression (~200-250KB WebP/JPEG)
-    // Zero external libraries. Uses native browser standard Canvas & FileReader.
-    async function compressAnswerPhoto(file, maxDimension = 1600, targetMaxBytes = 250 * 1024) {
+    // 4. Client-Side Pure HTML5 Canvas Photo Compression (~180-220KB WebP/JPEG)
+    // Zero external libraries. Uses native browser standard Canvas & FileReader with memory cleanup.
+    async function compressAnswerPhoto(file, maxDimension = 1280, targetMaxBytes = 220 * 1024) {
         return new Promise((resolve, reject) => {
             if (!file || !file.type.startsWith('image/')) {
                 return reject(new Error('Selected file is not an image.'));
@@ -87,7 +191,7 @@
                     let width = img.naturalWidth || img.width;
                     let height = img.naturalHeight || img.height;
 
-                    // 1. Maintain aspect ratio within maxDimension
+                    // 1. Maintain aspect ratio within maxDimension (1280px for mobile RAM safety)
                     if (width > maxDimension || height > maxDimension) {
                         if (width > height) {
                             height = Math.round((height * maxDimension) / width);
@@ -119,7 +223,7 @@
                         mimeType = 'image/jpeg';
                     }
 
-                    // 4. Adaptive quality stepping to guarantee target bytes (~200-250KB)
+                    // 4. Adaptive quality stepping to guarantee target bytes (~180-220KB)
                     let quality = 0.80;
                     let dataUrl = canvas.toDataURL(mimeType, quality);
                     let byteLength = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4);
@@ -135,6 +239,12 @@
                             if (size <= targetMaxBytes) break;
                         }
                     }
+
+                    // Low-memory browser cleanup
+                    ctx.clearRect(0, 0, width, height);
+                    canvas.width = 1;
+                    canvas.height = 1;
+                    img.src = '';
 
                     resolve({
                         dataUrl: dataUrl,
@@ -172,10 +282,20 @@
             const data = await res.json();
             examState.exam = data;
 
-            // Check if student already has a saved in-progress session
-            const savedSession = loadSession(examState.code);
+            // Server Clock Synchronization: Anchors all timer logic to server wall-clock
+            if (data.server_now_utc) {
+                const serverTime = new Date(data.server_now_utc).getTime();
+                examState.clockSkewMs = serverTime - Date.now();
+            }
+
+            // Check if student already has a saved in-progress session (try localStorage, then IDB fallback)
+            let savedSession = loadSession(examState.code);
+            if (!savedSession) {
+                savedSession = await loadSessionFromIDB(examState.code);
+            }
+
             if (savedSession && savedSession.status === 'in_progress') {
-                const now = Date.now();
+                const now = getServerNow();
                 if (now < savedSession.effective_end_time) {
                     // Restore session immediately
                     restoreSession(savedSession);
@@ -245,7 +365,7 @@
 
     // 6. Session Persistence & Start
     function startExamSession(name, roll, section) {
-        const startTime = Date.now();
+        const startTime = getServerNow();
         const durationMs = examState.exam.duration_minutes * 60 * 1000;
         const computedEndTime = startTime + durationMs;
         const deadlineTime = new Date(examState.exam.deadline).getTime();
@@ -270,16 +390,20 @@
     function saveSession() {
         if (!examState.session) return;
         examState.session.answers = examState.answers;
-        examState.session.last_saved = Date.now();
+        examState.session.last_saved = getServerNow();
         try {
             localStorage.setItem(`exam_session_${examState.code}`, JSON.stringify(examState.session));
-            const indicator = document.getElementById('save-status-indicator');
-            if (indicator) {
-                const now = new Date();
-                indicator.textContent = `✓ Saved locally at ${now.toLocaleTimeString()}`;
-            }
         } catch (e) {
-            console.warn('localStorage full or inaccessible:', e);
+            console.warn('localStorage QuotaExceededError (5MB mobile limit). IndexedDB will preserve session:', e);
+        }
+
+        // Always replicate session to IndexedDB fallback
+        saveSessionToIDB(examState.session);
+
+        const indicator = document.getElementById('save-status-indicator');
+        if (indicator) {
+            const now = new Date(getServerNow());
+            indicator.textContent = `✓ Saved locally at ${now.toLocaleTimeString()}`;
         }
     }
 
@@ -296,6 +420,7 @@
         try {
             localStorage.removeItem(`exam_session_${code}`);
         } catch (e) {}
+        clearSessionFromIDB(code);
     }
 
     function restoreSession(savedSession) {
@@ -337,12 +462,12 @@
         };
     }
 
-    // 8. Wall-Clock Synchronized Countdown Timer
+    // 8. Wall-Clock Synchronized Countdown Timer (Server Anchored)
     function startCountdownTimer() {
         if (examState.timerInterval) clearInterval(examState.timerInterval);
 
         function updateTimer() {
-            const now = Date.now();
+            const now = getServerNow();
             const remainingMs = Math.max(0, examState.session.effective_end_time - now);
 
             if (remainingMs <= 0) {
@@ -639,7 +764,187 @@
         submitExam(true);
     }
 
-    // 12. Submit Exam Answers
+    // 12. Submit Exam Answers with Fault-Tolerant Auto-Retry & Emergency Export
+    async function generateEmergencySquireFile() {
+        const clientTimestamp = new Date(getServerNow()).toISOString();
+        const answersList = examState.lastPayloadAnswers || examState.exam.questions.map(q => {
+            const a = examState.answers[q.id] || {};
+            return {
+                question_id: q.id,
+                typed_answer: a.typed_answer || '',
+                image_data: a.image_data || ''
+            };
+        });
+
+        const cleanRoll = (examState.student.roll || '').trim().toUpperCase();
+        const rawMsg = `${examState.code.trim().toUpperCase()}:${cleanRoll}:${clientTimestamp}:${answersList.length}`;
+
+        let integrityHash = '';
+        try {
+            const msgBuffer = new TextEncoder().encode(rawMsg);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            integrityHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch (e) {
+            let hash = 0;
+            for (let i = 0; i < rawMsg.length; i++) {
+                hash = ((hash << 5) - hash) + rawMsg.charCodeAt(i);
+                hash |= 0;
+            }
+            integrityHash = 'sha256fallback_' + Math.abs(hash).toString(16);
+        }
+
+        const now = getServerNow();
+        const timeTakenSecs = examState.lastTimeTakenSecs || Math.max(1, Math.round((now - (examState.session?.start_time || now)) / 1000));
+
+        const emergencyPayload = {
+            exam_code: examState.code,
+            student_name: examState.student.name,
+            roll_number: cleanRoll,
+            section: examState.student.section || '',
+            time_taken_seconds: timeTakenSecs,
+            client_timestamp: clientTimestamp,
+            answers: answersList,
+            integrity_hash: integrityHash
+        };
+
+        const blob = new Blob([JSON.stringify(emergencyPayload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${examState.code}_${cleanRoll}_emergency_submission.squire`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showToast('Emergency submission file (.squire) downloaded! Hand this to your teacher.', 'success', 6000);
+    }
+
+    function openRetryEmergencyModal(attempt, maxAttempts, delaySecs, isFinal = false) {
+        const modal = document.getElementById('retry-emergency-modal');
+        if (!modal) return;
+
+        const titleEl = document.getElementById('retry-modal-title');
+        const descEl = document.getElementById('retry-modal-desc');
+        const iconEl = document.getElementById('retry-icon-container');
+
+        if (isFinal) {
+            titleEl.textContent = 'Submission Interrupted';
+            descEl.innerHTML = 'Unable to establish connection to the examination server after multiple attempts. <strong>Please download your Emergency Submission file below</strong> and give it to your instructor.';
+            iconEl.innerHTML = '⚠️';
+            iconEl.className = "w-14 h-14 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-2xl";
+        } else {
+            titleEl.textContent = 'Connecting & Submitting Answers...';
+            descEl.innerHTML = `Network was interrupted. Retrying in <span id="retry-countdown" class="font-bold font-mono text-amber-600 dark:text-amber-400">${delaySecs}</span>s (Attempt <span id="retry-attempt-num" class="font-bold">${attempt}</span> of ${maxAttempts})...`;
+            iconEl.innerHTML = '⏳';
+            iconEl.className = "w-14 h-14 mx-auto rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center text-2xl";
+        }
+
+        modal.classList.remove('hidden');
+
+        document.getElementById('btn-download-emergency-squire').onclick = () => {
+            generateEmergencySquireFile();
+        };
+
+        document.getElementById('btn-manual-retry-now').onclick = () => {
+            if (examState.retryInterval) clearInterval(examState.retryInterval);
+            attemptSubmissionNetworkCall();
+        };
+
+        document.getElementById('btn-close-retry-modal').onclick = () => {
+            if (examState.retryInterval) clearInterval(examState.retryInterval);
+            modal.classList.add('hidden');
+            examState.isSubmitting = false;
+            const submitBtn = document.getElementById('btn-trigger-submit');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<span>Submit Exam 🚀</span>`;
+            }
+        };
+    }
+
+    function startAutoRetrySequence(attempt = 1) {
+        const maxAttempts = 4;
+        const delays = [2, 5, 10, 20];
+
+        if (attempt > maxAttempts) {
+            openRetryEmergencyModal(maxAttempts, maxAttempts, 0, true);
+            return;
+        }
+
+        const delay = delays[attempt - 1] || 10;
+        openRetryEmergencyModal(attempt, maxAttempts, delay, false);
+
+        let remaining = delay;
+        const countdownEl = document.getElementById('retry-countdown');
+        const progressEl = document.getElementById('retry-progress-bar');
+
+        if (examState.retryInterval) clearInterval(examState.retryInterval);
+        examState.retryInterval = setInterval(() => {
+            remaining--;
+            if (countdownEl) countdownEl.textContent = remaining;
+            if (progressEl) {
+                const pct = Math.max(0, Math.min(100, Math.round(((delay - remaining) / delay) * 100)));
+                progressEl.style.width = `${pct}%`;
+            }
+
+            if (remaining <= 0) {
+                clearInterval(examState.retryInterval);
+                attemptSubmissionNetworkCall(attempt);
+            }
+        }, 1000);
+    }
+
+    async function attemptSubmissionNetworkCall(attempt = 1) {
+        try {
+            const res = await fetch(`/api/exams/${examState.code}/submit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    student_name: examState.student.name,
+                    roll_number: examState.student.roll,
+                    section: examState.student.section || '',
+                    time_taken_seconds: examState.lastTimeTakenSecs,
+                    answers: examState.lastPayloadAnswers
+                })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                if (res.status === 400) {
+                    throw new Error(err.detail || 'Submission rejected by server.');
+                }
+                throw new Error(err.detail || `Server status ${res.status}`);
+            }
+
+            const data = await res.json();
+
+            // Succeeded!
+            if (examState.retryInterval) clearInterval(examState.retryInterval);
+            document.getElementById('retry-emergency-modal')?.classList.add('hidden');
+            clearSession(examState.code);
+            window.onbeforeunload = null;
+
+            showSubmissionReceipt(data, examState.lastTimeTakenSecs);
+            showToast('Exam submitted successfully! Receipt generated.', 'success');
+        } catch (err) {
+            console.warn(`Submission attempt ${attempt} failed:`, err);
+            if (err.message && (err.message.includes('already exists') || err.message.includes('not currently active'))) {
+                document.getElementById('retry-emergency-modal')?.classList.add('hidden');
+                examState.isSubmitting = false;
+                const submitBtn = document.getElementById('btn-trigger-submit');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = `<span>Submit Exam 🚀</span>`;
+                }
+                showToast(err.message, 'error', 5000);
+            } else {
+                startAutoRetrySequence(attempt + 1);
+            }
+        }
+    }
+
     async function submitExam(isAutoSubmit = false) {
         if (examState.isSubmitting) return;
         examState.isSubmitting = true;
@@ -652,7 +957,7 @@
             submitBtn.innerHTML = `<span>Submitting... ⏳</span>`;
         }
 
-        const now = Date.now();
+        const now = getServerNow();
         const timeTakenSecs = Math.max(1, Math.round((now - examState.session.start_time) / 1000));
 
         const payloadAnswers = examState.exam.questions.map(q => {
@@ -664,41 +969,16 @@
             };
         });
 
-        try {
-            const res = await fetch(`/api/exams/${examState.code}/submit`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    student_name: examState.student.name,
-                    roll_number: examState.student.roll,
-                    section: examState.student.section || '',
-                    time_taken_seconds: timeTakenSecs,
-                    answers: payloadAnswers
-                })
-            });
+        examState.lastPayloadAnswers = payloadAnswers;
+        examState.lastTimeTakenSecs = timeTakenSecs;
 
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || 'Submission failed');
-            }
-
-            const data = await res.json();
-
-            // Clear session upon verified submission
-            clearSession(examState.code);
-            window.onbeforeunload = null;
-
-            // Show confirmation receipt
-            showSubmissionReceipt(data, timeTakenSecs);
-            showToast('Exam submitted successfully! Receipt generated.', 'success');
-        } catch (err) {
-            examState.isSubmitting = false;
-            if (submitBtn) {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = `<span>Submit Exam 🚀</span>`;
-            }
-            showToast('Submission error: ' + err.message, 'error', 5000);
+        // If currently offline, jump directly into retry modal
+        if (!navigator.onLine) {
+            startAutoRetrySequence(1);
+            return;
         }
+
+        await attemptSubmissionNetworkCall(1);
     }
 
     // 13. Post-Submission Confirmation Receipt
@@ -869,10 +1149,15 @@
     }
 
     // Bootstrap
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initExamRoom);
-    } else {
+    function bootstrap() {
+        initNetworkMonitor();
         initExamRoom();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootstrap);
+    } else {
+        bootstrap();
     }
 
 })();

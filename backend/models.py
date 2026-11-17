@@ -156,3 +156,14 @@ class GradeSubmissionRequest(BaseModel):
 
     def get_grades_list(self) -> List[QuestionGradeInput]:
         return self.grades if self.grades is not None else (self.answers or [])
+
+
+class EmergencySubmissionPayload(BaseModel):
+    exam_code: str = Field(..., description="Exam code identifier")
+    student_name: str = Field(..., min_length=1, max_length=150)
+    roll_number: str = Field(..., min_length=1, max_length=100)
+    section: Optional[str] = Field(default="", max_length=50)
+    time_taken_seconds: int = Field(default=0, ge=0)
+    client_timestamp: str = Field(..., description="ISO 8601 timestamp when client generated the offline package")
+    answers: List[StudentAnswerInput] = Field(default_factory=list)
+    integrity_hash: str = Field(..., min_length=16, description="SHA-256 signature of the payload")

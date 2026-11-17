@@ -37,7 +37,7 @@ class Database:
             self.db_url = url
             self.db_path = None
             try:
-                self.pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=self.db_url)
+                self.pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=25, dsn=self.db_url)
             except Exception as e:
                 print(f"[Warning] Failed to initialize ThreadedConnectionPool: {e}")
                 self.pool = None
@@ -55,21 +55,50 @@ class Database:
 
     @contextmanager
     def get_connection(self):
-        """Context manager providing a database connection with auto-closing and dictionary row access."""
+        """Context manager providing a resilient database connection with auto-closing, health checks, and retry."""
         if self.is_postgres:
             conn = None
-            try:
-                if self.pool is not None:
-                    conn = self.pool.getconn()
-                    # Check if connection is still healthy; if closed or broken, recreate
-                    if getattr(conn, "closed", 1) != 0:
+            is_new_conn = False
+            last_err = None
+            for attempt in range(3):
+                try:
+                    if self.pool is not None:
                         try:
-                            self.pool.putconn(conn, close=True)
+                            conn = self.pool.getconn()
                         except Exception:
-                            pass
+                            # If connection pool is exhausted or failed under sudden spike, connect directly
+                            conn = psycopg2.connect(self.db_url)
+                            is_new_conn = True
+
+                        # Ping connection to guarantee it wasn't severed during Neon serverless sleep
+                        is_healthy = False
+                        if getattr(conn, "closed", 1) == 0:
+                            try:
+                                with conn.cursor() as cur:
+                                    cur.execute("SELECT 1")
+                                is_healthy = True
+                            except Exception:
+                                is_healthy = False
+
+                        if not is_healthy:
+                            if not is_new_conn and self.pool is not None:
+                                try:
+                                    self.pool.putconn(conn, close=True)
+                                except Exception:
+                                    pass
+                            conn = psycopg2.connect(self.db_url)
+                            is_new_conn = True
+                    else:
                         conn = psycopg2.connect(self.db_url)
-                else:
-                    conn = psycopg2.connect(self.db_url)
+                        is_new_conn = True
+                    break
+                except Exception as e:
+                    last_err = e
+                    if attempt == 2:
+                        raise last_err
+                    time.sleep(0.15 * (2 ** attempt))
+
+            try:
                 yield conn
             except Exception:
                 if conn and getattr(conn, "closed", 1) == 0:
@@ -80,7 +109,7 @@ class Database:
                 raise
             finally:
                 if conn:
-                    if self.pool is not None:
+                    if self.pool is not None and not is_new_conn:
                         try:
                             if getattr(conn, "closed", 1) == 0:
                                 self.pool.putconn(conn)
@@ -94,7 +123,7 @@ class Database:
                         except Exception:
                             pass
         else:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA foreign_keys = ON")
@@ -301,6 +330,22 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_exam_submissions_status ON exam_submissions(status);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sub_answers_sub_id ON exam_submission_answers(submission_id);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sub_answers_q_id ON exam_submission_answers(question_id);")
+
+            # Resilient schema migration: emergency submission tracking
+            try:
+                if self.is_postgres:
+                    cursor.execute("ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS is_emergency BOOLEAN DEFAULT FALSE;")
+                    cursor.execute("ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS emergency_hash VARCHAR(100) DEFAULT NULL;")
+                else:
+                    cursor.execute("PRAGMA table_info(exam_submissions);")
+                    cols = [r[1] for r in cursor.fetchall()]
+                    if "is_emergency" not in cols:
+                        cursor.execute("ALTER TABLE exam_submissions ADD COLUMN is_emergency BOOLEAN DEFAULT 0;")
+                    if "emergency_hash" not in cols:
+                        cursor.execute("ALTER TABLE exam_submissions ADD COLUMN emergency_hash VARCHAR(100) DEFAULT NULL;")
+            except Exception as e:
+                pass
+
             conn.commit()
 
     def upsert_question(
@@ -1125,9 +1170,11 @@ class Database:
         roll_number: str,
         section: str = "",
         time_taken_seconds: int = 0,
-        answers: Optional[List[Dict[str, Any]]] = None
+        answers: Optional[List[Dict[str, Any]]] = None,
+        is_emergency: bool = False,
+        emergency_hash: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Records student submission answers with duplicate detection."""
+        """Records student submission answers with duplicate detection and emergency audit flags."""
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
             clean_name = student_name.strip()
@@ -1145,20 +1192,20 @@ class Database:
 
             if self.is_postgres:
                 sub_q = """
-                    INSERT INTO exam_submissions (exam_id, student_name, roll_number, section, time_taken_seconds, status)
-                    VALUES (%s, %s, %s, %s, %s, 'submitted')
+                    INSERT INTO exam_submissions (exam_id, student_name, roll_number, section, time_taken_seconds, status, is_emergency, emergency_hash)
+                    VALUES (%s, %s, %s, %s, %s, 'submitted', %s, %s)
                     RETURNING id, submitted_at
                 """
-                cursor.execute(sub_q, (exam_id, clean_name, clean_roll, clean_section, time_taken_seconds))
+                cursor.execute(sub_q, (exam_id, clean_name, clean_roll, clean_section, time_taken_seconds, is_emergency, emergency_hash))
                 row = cursor.fetchone()
                 submission_id = row[0]
                 submitted_at = str(row[1])
             else:
                 sub_q = """
-                    INSERT INTO exam_submissions (exam_id, student_name, roll_number, section, time_taken_seconds, status)
-                    VALUES (?, ?, ?, ?, ?, 'submitted')
+                    INSERT INTO exam_submissions (exam_id, student_name, roll_number, section, time_taken_seconds, status, is_emergency, emergency_hash)
+                    VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?)
                 """
-                cursor.execute(sub_q, (exam_id, clean_name, clean_roll, clean_section, time_taken_seconds))
+                cursor.execute(sub_q, (exam_id, clean_name, clean_roll, clean_section, time_taken_seconds, int(is_emergency), emergency_hash))
                 submission_id = cursor.lastrowid
                 submitted_at = datetime.now(timezone.utc).isoformat()
 
@@ -1190,7 +1237,9 @@ class Database:
             "section": clean_section,
             "submitted_at": submitted_at,
             "time_taken_seconds": time_taken_seconds,
-            "status": "submitted"
+            "status": "submitted",
+            "is_emergency": bool(is_emergency),
+            "emergency_hash": emergency_hash
         }
 
     def get_submission_by_exam_and_roll(self, exam_id: int, roll_number: str) -> Optional[Dict[str, Any]]:
@@ -1201,7 +1250,8 @@ class Database:
             query = self._format_query("""
                 SELECT s.id, s.exam_id, s.student_name, s.roll_number, s.section,
                        s.submitted_at, s.time_taken_seconds, s.status, s.total_score,
-                       s.feedback, s.graded_at, e.title AS exam_title, e.exam_code, e.total_marks
+                       s.feedback, s.graded_at, s.is_emergency, s.emergency_hash,
+                       e.title AS exam_title, e.exam_code, e.total_marks
                 FROM exam_submissions s
                 JOIN exams e ON e.id = s.exam_id
                 WHERE s.exam_id = ? AND UPPER(s.roll_number) = ?
@@ -1223,6 +1273,8 @@ class Database:
                 "submitted_at": str(row["submitted_at"]),
                 "time_taken_seconds": row["time_taken_seconds"],
                 "status": row["status"],
+                "is_emergency": bool(row["is_emergency"]) if "is_emergency" in row.keys() else False,
+                "emergency_hash": row["emergency_hash"] if "emergency_hash" in row.keys() else None,
                 "total_score": float(row["total_score"]) if row["total_score"] is not None else None,
                 "percentage": round((float(row["total_score"]) / float(row["total_marks"])) * 100, 1) if (row["total_score"] is not None and row["total_marks"] > 0) else None,
                 "feedback": row["feedback"] or "",
@@ -1263,7 +1315,7 @@ class Database:
             query = self._format_query("""
                 SELECT s.id, s.exam_id, s.student_name, s.roll_number, s.section,
                        s.submitted_at, s.time_taken_seconds, s.status, s.total_score,
-                       s.feedback, s.graded_at, e.total_marks
+                       s.feedback, s.graded_at, s.is_emergency, s.emergency_hash, e.total_marks
                 FROM exam_submissions s
                 JOIN exams e ON e.id = s.exam_id
                 WHERE s.exam_id = ?
@@ -1281,6 +1333,8 @@ class Database:
                     "submitted_at": str(r["submitted_at"]),
                     "time_taken_seconds": r["time_taken_seconds"],
                     "status": r["status"],
+                    "is_emergency": bool(r["is_emergency"]) if "is_emergency" in r.keys() else False,
+                    "emergency_hash": r["emergency_hash"] if "emergency_hash" in r.keys() else None,
                     "total_score": float(r["total_score"]) if r["total_score"] is not None else None,
                     "total_marks": float(r["total_marks"]),
                     "feedback": r["feedback"] or "",
@@ -1296,7 +1350,7 @@ class Database:
             query = self._format_query("""
                 SELECT s.id, s.exam_id, s.student_name, s.roll_number, s.section,
                        s.submitted_at, s.time_taken_seconds, s.status, s.total_score,
-                       s.feedback, s.graded_at, s.graded_by,
+                       s.feedback, s.graded_at, s.graded_by, s.is_emergency, s.emergency_hash,
                        e.title AS exam_title, e.exam_code, e.subject AS exam_subject, e.total_marks
                 FROM exam_submissions s
                 JOIN exams e ON e.id = s.exam_id
@@ -1320,6 +1374,8 @@ class Database:
                 "submitted_at": str(row["submitted_at"]),
                 "time_taken_seconds": row["time_taken_seconds"],
                 "status": row["status"],
+                "is_emergency": bool(row["is_emergency"]) if "is_emergency" in row.keys() else False,
+                "emergency_hash": row["emergency_hash"] if "emergency_hash" in row.keys() else None,
                 "total_score": float(row["total_score"]) if row["total_score"] is not None else None,
                 "percentage": round((float(row["total_score"]) / float(row["total_marks"])) * 100, 1) if (row["total_score"] is not None and row["total_marks"] > 0) else None,
                 "feedback": row["feedback"] or "",
@@ -1395,3 +1451,70 @@ class Database:
             conn.commit()
 
         return self.get_submission_detail(submission_id)
+
+    def export_full_backup(self) -> Dict[str, Any]:
+        """Exports a complete JSON disaster recovery backup of questions, exams, and submissions."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+
+            # 1. Questions
+            cursor.execute("SELECT id, question_text, normalized_text, subject, topic, frequency, sources, created_at, updated_at FROM questions ORDER BY id ASC")
+            q_rows = cursor.fetchall()
+            questions = [dict(r) for r in q_rows]
+
+            # 2. Users (sanitized without salt or sensitive tokens)
+            cursor.execute("SELECT id, username, display_name, role, is_active, created_at FROM users ORDER BY id ASC")
+            u_rows = cursor.fetchall()
+            users = [dict(r) for r in u_rows]
+
+            # 3. Exams
+            cursor.execute("SELECT id, exam_code, title, subject, duration_minutes, deadline, total_marks, instructions, status, created_by, created_at FROM exams ORDER BY id ASC")
+            e_rows = cursor.fetchall()
+            exams = [dict(r) for r in e_rows]
+
+            # 4. Exam Questions
+            cursor.execute("SELECT id, exam_id, question_id, question_order, question_text, marks, created_at FROM exam_questions ORDER BY exam_id ASC, question_order ASC")
+            eq_rows = cursor.fetchall()
+            exam_questions = [dict(r) for r in eq_rows]
+
+            # 5. Exam Submissions
+            cursor.execute("SELECT id, exam_id, student_name, roll_number, section, submitted_at, time_taken_seconds, status, total_score, feedback, graded_by, graded_at, created_at, is_emergency, emergency_hash FROM exam_submissions ORDER BY id ASC")
+            es_rows = cursor.fetchall()
+            submissions = [dict(r) for r in es_rows]
+
+            # 6. Submission Answers
+            cursor.execute("SELECT id, submission_id, question_id, typed_answer, image_data, marks_awarded, feedback, created_at FROM exam_submission_answers ORDER BY submission_id ASC, id ASC")
+            esa_rows = cursor.fetchall()
+            answers = [dict(r) for r in esa_rows]
+
+            def sanitize_record(d):
+                clean = {}
+                for k, v in d.items():
+                    if isinstance(v, datetime):
+                        clean[k] = v.isoformat()
+                    elif v is not None and not isinstance(v, (str, int, float, bool, list, dict)):
+                        clean[k] = str(v)
+                    else:
+                        clean[k] = v
+                return clean
+
+            return {
+                "backup_version": "3.5.0",
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "counts": {
+                    "questions": len(questions),
+                    "users": len(users),
+                    "exams": len(exams),
+                    "exam_questions": len(exam_questions),
+                    "submissions": len(submissions),
+                    "answers": len(answers)
+                },
+                "data": {
+                    "questions": [sanitize_record(q) for q in questions],
+                    "users": [sanitize_record(u) for u in users],
+                    "exams": [sanitize_record(e) for e in exams],
+                    "exam_questions": [sanitize_record(eq) for eq in exam_questions],
+                    "submissions": [sanitize_record(s) for s in submissions],
+                    "answers": [sanitize_record(a) for a in answers]
+                }
+            }

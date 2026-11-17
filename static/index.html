@@ -140,10 +140,14 @@
                         </div>
                         <div class="admin-only border-t border-slate-100 dark:border-slate-700/80 my-1"></div>
                         <div class="admin-only py-1">
-                            <div class="px-3.5 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider">Database Tools</div>
-                            <button id="btn-backup-library" class="w-full text-left px-3.5 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-200 flex items-center space-x-2 font-medium cursor-pointer transition-colors" title="Export entire question bank as a JSON backup">
+                            <div class="px-3.5 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider">Database & Disaster Recovery</div>
+                            <button id="btn-full-system-backup" class="w-full text-left px-3.5 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-brand-700 dark:text-brand-300 flex items-center space-x-2 font-semibold cursor-pointer transition-colors" title="Export complete system backup (questions, exams, submissions) for disaster recovery">
+                                <span class="text-sm">💾</span>
+                                <span>Complete System Backup</span>
+                            </button>
+                            <button id="btn-backup-library" class="w-full text-left px-3.5 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-200 flex items-center space-x-2 font-medium cursor-pointer transition-colors" title="Export questions library only as a JSON backup">
                                 <span class="text-sm">📥</span>
-                                <span>Backup Library JSON</span>
+                                <span>Backup Questions Library</span>
                             </button>
                             <button id="btn-restore-library" class="w-full text-left px-3.5 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-200 flex items-center space-x-2 font-medium cursor-pointer transition-colors" title="Restore questions from a JSON backup file">
                                 <span class="text-sm">📤</span>
@@ -471,10 +475,17 @@
                             <p id="sub-view-meta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Subject • Total Marks: 50 • Duration: 60 min</p>
                         </div>
                     </div>
-                    <button id="btn-refresh-submissions" class="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer flex items-center space-x-1">
-                        <span>🔄</span>
-                        <span>Refresh Submissions</span>
-                    </button>
+                    <div class="flex items-center space-x-2">
+                        <input type="file" id="emergency-file-input" accept=".squire,.json" class="hidden">
+                        <button id="btn-import-emergency-sub" class="px-3 py-2 text-xs font-semibold rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition cursor-pointer flex items-center space-x-1 shadow-xs" title="Upload emergency student submission (.squire)">
+                            <span>📥</span>
+                            <span>Import Emergency (.squire)</span>
+                        </button>
+                        <button id="btn-refresh-submissions" class="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer flex items-center space-x-1">
+                            <span>🔄</span>
+                            <span>Refresh</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Submissions Table -->
@@ -1001,6 +1012,6 @@
     </div>
 
     <!-- Application Script -->
-    <script src="/static/app.js?v=3.4.0"></script>
+    <script src="/static/app.js?v=3.5.0"></script>
 </body>
 </html>
