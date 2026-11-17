@@ -24,8 +24,20 @@
         clockSkewMs: 0,
         retryInterval: null,
         lastPayloadAnswers: null,
-        lastTimeTakenSecs: 0
+        lastTimeTakenSecs: 0,
+        currentQuestionIndex: 0
     };
+
+    // Tactile Haptic Touch Feedback Utility
+    function triggerHaptic(type = 'light') {
+        if (!navigator.vibrate) return;
+        try {
+            if (type === 'light') navigator.vibrate(10);
+            else if (type === 'medium') navigator.vibrate(25);
+            else if (type === 'success') navigator.vibrate([10, 30, 15]);
+            else if (type === 'error') navigator.vibrate([30, 50, 30]);
+        } catch (e) {}
+    }
 
     // 0. Resilient IndexedDB Multi-Tier Storage Engine (bypasses mobile 5MB localStorage limit)
     const IDB_NAME = 'SquireWayExamStore';
@@ -443,6 +455,8 @@
         // Render questions
         renderExamQuestions();
         renderNavigator();
+        initMobileExamControls();
+        updateMobileExamDock();
 
         // Start synchronized timer
         startCountdownTimer();
@@ -632,6 +646,7 @@
                 container.innerHTML = renderPhotoThumbnail(qId, compressed.dataUrl, compressed.sizeBytes);
             }
             handleAnswerUpdate(qId, null, compressed.dataUrl, compressed.sizeBytes);
+            triggerHaptic('success');
             showToast(`Photo compressed (${Math.round(compressed.sizeBytes / 1024)} KB) and attached!`, 'success');
         } catch (err) {
             showToast('Error compressing image: ' + err.message, 'error');
@@ -644,6 +659,7 @@
             container.innerHTML = renderPhotoUploadPrompt(qId);
         }
         handleAnswerUpdate(qId, null, '');
+        triggerHaptic('medium');
         showToast('Photo sheet removed.', 'info');
     };
 
@@ -669,6 +685,7 @@
         }
 
         updateNavigatorPill(qId, isAnswered);
+        updateMobileExamDock();
 
         // Debounced Auto-save
         clearTimeout(examState.autoSaveTimeout);
@@ -719,7 +736,15 @@
         if (summary) summary.textContent = `${answered} / ${total} Answered`;
     }
 
-    window.jumpToQuestion = function(qId) {
+    window.jumpToQuestion = function(qId, triggerVibrate = true) {
+        if (triggerVibrate) triggerHaptic('light');
+        if (examState.exam && examState.exam.questions) {
+            const idx = examState.exam.questions.findIndex(q => q.id === qId);
+            if (idx !== -1) {
+                examState.currentQuestionIndex = idx;
+                updateMobileExamDock();
+            }
+        }
         const card = document.getElementById(`q-card-${qId}`);
         if (card) {
             card.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -727,6 +752,105 @@
             setTimeout(() => card.classList.remove('ring-2', 'ring-brand-500'), 1500);
         }
     };
+
+    function updateMobileExamDock() {
+        if (!examState.exam || !examState.exam.questions || examState.exam.questions.length === 0) return;
+        const total = examState.exam.questions.length;
+        const idx = examState.currentQuestionIndex || 0;
+        const currentQ = examState.exam.questions[idx];
+        const isAnswered = currentQ && examState.answers[currentQ.id] && 
+            Boolean(examState.answers[currentQ.id].typed_answer.trim() || examState.answers[currentQ.id].image_data);
+
+        const indicator = document.getElementById('mobile-exam-q-indicator');
+        if (indicator) {
+            indicator.innerHTML = `<span>Q ${idx + 1} of ${total}</span>${isAnswered ? ' <span class="text-emerald-500 font-bold text-[10px]">✓</span>' : ''}`;
+        }
+
+        const prevBtn = document.getElementById('btn-mobile-prev-q');
+        if (prevBtn) {
+            if (idx === 0) {
+                prevBtn.classList.add('opacity-40', 'pointer-events-none');
+            } else {
+                prevBtn.classList.remove('opacity-40', 'pointer-events-none');
+            }
+        }
+
+        const nextLabel = document.getElementById('btn-mobile-next-label');
+        const nextArrow = document.getElementById('btn-mobile-next-arrow');
+        if (nextLabel && nextArrow) {
+            if (idx === total - 1) {
+                nextLabel.textContent = 'Submit';
+                nextArrow.textContent = '🚀';
+            } else {
+                nextLabel.textContent = 'Next';
+                nextArrow.textContent = '→';
+            }
+        }
+    }
+
+    function goToPrevQuestion() {
+        if (!examState.exam || !examState.exam.questions) return;
+        if (examState.currentQuestionIndex > 0) {
+            examState.currentQuestionIndex--;
+            const prevQ = examState.exam.questions[examState.currentQuestionIndex];
+            if (prevQ) jumpToQuestion(prevQ.id);
+        }
+    }
+
+    function goToNextQuestion() {
+        if (!examState.exam || !examState.exam.questions) return;
+        const total = examState.exam.questions.length;
+        if (examState.currentQuestionIndex < total - 1) {
+            examState.currentQuestionIndex++;
+            const nextQ = examState.exam.questions[examState.currentQuestionIndex];
+            if (nextQ) jumpToQuestion(nextQ.id);
+        } else {
+            triggerHaptic('medium');
+            openSubmitConfirmModal();
+        }
+    }
+
+    function initMobileExamControls() {
+        const prevBtn = document.getElementById('btn-mobile-prev-q');
+        const nextBtn = document.getElementById('btn-mobile-next-q');
+
+        prevBtn?.addEventListener('click', () => {
+            goToPrevQuestion();
+        });
+
+        nextBtn?.addEventListener('click', () => {
+            goToNextQuestion();
+        });
+
+        const container = document.getElementById('exam-questions-container');
+        if (container) {
+            let touchStartX = 0;
+            let touchStartY = 0;
+            container.addEventListener('touchstart', (e) => {
+                if (e.changedTouches && e.changedTouches.length) {
+                    touchStartX = e.changedTouches[0].screenX;
+                    touchStartY = e.changedTouches[0].screenY;
+                }
+            }, { passive: true });
+
+            container.addEventListener('touchend', (e) => {
+                if (!e.changedTouches || !e.changedTouches.length) return;
+                const touchEndX = e.changedTouches[0].screenX;
+                const touchEndY = e.changedTouches[0].screenY;
+                const diffX = touchEndX - touchStartX;
+                const diffY = touchEndY - touchStartY;
+
+                // Threshold: at least 60px horizontal flick, horizontal dominates vertical
+                if (Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.5) {
+                    if (diffX < 0) {
+                        goToNextQuestion();
+                    } else {
+                        goToPrevQuestion();
+                    }
+                }
+            }, { passive: true });
+        }
+    }
 
     // 11. Submission Confirmation Dialog
     function openSubmitConfirmModal() {
@@ -927,6 +1051,7 @@
             window.onbeforeunload = null;
 
             showSubmissionReceipt(data, examState.lastTimeTakenSecs);
+            triggerHaptic('success');
             showToast('Exam submitted successfully! Receipt generated.', 'success');
         } catch (err) {
             console.warn(`Submission attempt ${attempt} failed:`, err);
@@ -938,6 +1063,7 @@
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = `<span>Submit Exam 🚀</span>`;
                 }
+                triggerHaptic('error');
                 showToast(err.message, 'error', 5000);
             } else {
                 startAutoRetrySequence(attempt + 1);
@@ -948,6 +1074,7 @@
     async function submitExam(isAutoSubmit = false) {
         if (examState.isSubmitting) return;
         examState.isSubmitting = true;
+        triggerHaptic('medium');
 
         if (examState.timerInterval) clearInterval(examState.timerInterval);
 

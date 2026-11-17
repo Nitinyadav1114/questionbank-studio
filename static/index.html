@@ -51,7 +51,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.3.1">
+    <link rel="stylesheet" href="/static/style.css?v=3.6.0">
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col font-['Inter',sans-serif] transition-colors duration-150">
 
@@ -174,7 +174,7 @@
     <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4 sm:px-0"></div>
 
     <!-- Main Content Container -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8 pb-24 md:pb-8">
         <!-- Question Bank View -->
         <div id="bank-view" class="space-y-8">
         <!-- Upload & Extraction Section -->
@@ -503,6 +503,9 @@
 
     <!-- Cart Drawer (Paper Builder) -->
     <aside id="cart-drawer" class="fixed top-0 right-0 bottom-0 w-full sm:w-[480px] bg-white dark:bg-slate-900 z-50 shadow-2xl flex flex-col transform translate-x-full transition-transform duration-300 ease-in-out border-l border-slate-200 dark:border-slate-800">
+        <!-- Mobile Bottom Sheet Drag Handle -->
+        <div class="sm:hidden w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 mx-auto mt-2.5 mb-1 shrink-0"></div>
+
         <!-- Drawer Header -->
         <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/80">
             <div class="flex items-center space-x-2">
@@ -1011,7 +1014,42 @@
         </div>
     </div>
 
+    <!-- Frosted Glass Mobile Bottom Navigation Dock (md:hidden) -->
+    <nav id="mobile-bottom-dock" class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/90 dark:bg-slate-900/90 border-t border-slate-200/80 dark:border-slate-800 safe-bottom transition-transform duration-200 shadow-lg">
+        <div class="grid grid-cols-4 h-14 items-center px-2">
+            <!-- 1. Question Bank -->
+            <button type="button" id="mob-nav-bank" class="flex flex-col items-center justify-center py-1 text-brand-600 dark:text-brand-400 pressable cursor-pointer">
+                <span class="text-lg">📚</span>
+                <span class="text-[10px] font-bold mt-0.5">Library</span>
+            </button>
+
+            <!-- 2. Cart -->
+            <button type="button" id="mob-nav-cart" class="relative flex flex-col items-center justify-center py-1 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white pressable cursor-pointer">
+                <span class="text-lg relative">
+                    🛒
+                    <span id="mob-cart-badge" class="hidden absolute -top-1.5 -right-2.5 bg-brand-600 text-white text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">0</span>
+                </span>
+                <span class="text-[10px] font-semibold mt-0.5">Cart</span>
+            </button>
+
+            <!-- 3. Exams -->
+            <button type="button" id="mob-nav-exams" class="relative flex flex-col items-center justify-center py-1 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white pressable cursor-pointer">
+                <span class="text-lg relative">
+                    📝
+                    <span id="mob-exams-badge" class="hidden absolute -top-1 -right-2 bg-amber-500 text-white text-[8px] font-bold px-1 rounded-full"></span>
+                </span>
+                <span class="text-[10px] font-semibold mt-0.5">Exams</span>
+            </button>
+
+            <!-- 4. Profile / Settings -->
+            <button type="button" id="mob-nav-profile" class="flex flex-col items-center justify-center py-1 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white pressable cursor-pointer">
+                <span class="text-lg">👤</span>
+                <span id="mob-nav-profile-label" class="text-[10px] font-semibold mt-0.5">Account</span>
+            </button>
+        </div>
+    </nav>
+
     <!-- Application Script -->
-    <script src="/static/app.js?v=3.5.0"></script>
+    <script src="/static/app.js?v=3.6.0"></script>
 </body>
 </html>

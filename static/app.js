@@ -23,6 +23,18 @@ const state = {
     maxCacheEntries: 40
 };
 
+// Tactile Haptic Touch Feedback Utility
+function triggerHaptic(type = 'light') {
+    if (!navigator.vibrate) return;
+    try {
+        if (type === 'light') navigator.vibrate(10);
+        else if (type === 'medium') navigator.vibrate(25);
+        else if (type === 'success') navigator.vibrate([10, 30, 15]);
+        else if (type === 'error') navigator.vibrate([30, 50, 30]);
+    } catch (e) {}
+}
+window.triggerHaptic = triggerHaptic;
+
 // DOM Elements
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('file-input');
@@ -534,6 +546,11 @@ function updateUserProfileUI() {
     if (dropdownUsername) dropdownUsername.textContent = `@${user.username}`;
     if (dropdownRole) dropdownRole.textContent = isAdmin ? '👑 Administrator' : '🎓 Teacher';
 
+    const mobProfileLabel = document.getElementById('mob-nav-profile-label');
+    if (mobProfileLabel) {
+        mobProfileLabel.textContent = (user.display_name || user.username || 'Account').split(' ')[0];
+    }
+
     updateThemeUI();
     applyRoleVisibility();
 }
@@ -874,12 +891,67 @@ async function handleRestoreFileSelected(e) {
     }
 }
 
+// Mobile Bottom Navigation Dock Controller
+function initMobileBottomDock() {
+    const mobNavBank = document.getElementById('mob-nav-bank');
+    const mobNavCart = document.getElementById('mob-nav-cart');
+    const mobNavExams = document.getElementById('mob-nav-exams');
+    const mobNavProfile = document.getElementById('mob-nav-profile');
+
+    if (mobNavBank) {
+        mobNavBank.addEventListener('click', () => {
+            triggerHaptic('light');
+            window.location.hash = '#bank';
+        });
+    }
+
+    if (mobNavCart) {
+        mobNavCart.addEventListener('click', () => {
+            triggerHaptic('light');
+            openCart();
+        });
+    }
+
+    if (mobNavExams) {
+        mobNavExams.addEventListener('click', () => {
+            triggerHaptic('light');
+            window.location.hash = '#exams';
+        });
+    }
+
+    if (mobNavProfile) {
+        mobNavProfile.addEventListener('click', () => {
+            triggerHaptic('light');
+            const profileBtn = document.getElementById('user-profile-btn');
+            if (profileBtn) {
+                profileBtn.click();
+            }
+        });
+    }
+
+    // Auto-hide mobile dock when on-screen keyboard is visible
+    if (window.visualViewport) {
+        let initialHeight = window.visualViewport.height;
+        window.visualViewport.addEventListener('resize', () => {
+            const dock = document.getElementById('mobile-bottom-dock');
+            if (!dock) return;
+            // When virtual keyboard opens on mobile, height drops significantly (> 150px)
+            if (window.visualViewport.height < initialHeight - 150) {
+                dock.classList.add('translate-y-full');
+            } else {
+                dock.classList.remove('translate-y-full');
+            }
+        });
+    }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
     initTheme();
     initDensity();
     setupEventListeners();
     setupInactivityListeners();
+    initMobileBottomDock();
     updateCartBadge();
     const isAuthed = await checkAuthStatus();
     if (isAuthed) {
@@ -1724,12 +1796,24 @@ function updateCartBadge() {
     openCartBtn.classList.remove('animate-cart-bounce');
     void openCartBtn.offsetWidth; // trigger reflow
     openCartBtn.classList.add('animate-cart-bounce');
+
+    // Synchronize mobile bottom dock cart badge
+    const mobCartBadge = document.getElementById('mob-cart-badge');
+    if (mobCartBadge) {
+        mobCartBadge.textContent = state.cart.length;
+        if (state.cart.length > 0) {
+            mobCartBadge.classList.remove('hidden');
+        } else {
+            mobCartBadge.classList.add('hidden');
+        }
+    }
 }
 
 window.toggleCartQuestion = function(id) {
     const existingIndex = state.cart.findIndex(item => item.id === id);
     if (existingIndex > -1) {
         state.cart.splice(existingIndex, 1);
+        triggerHaptic('medium');
         showToast("Removed from Question Cart", "info", 2000);
     } else {
         const question = state.currentQuestions.find(q => q.id === id);
@@ -1740,6 +1824,7 @@ window.toggleCartQuestion = function(id) {
                 subject: question.subject,
                 topic: question.topic
             });
+            triggerHaptic('light');
             showToast("Added to Question Cart", "success", 2000);
         }
     }
@@ -1770,6 +1855,7 @@ function addCurrentPageToCart() {
 }
 
 function openCart() {
+    triggerHaptic('light');
     cartBackdrop.classList.remove('hidden');
     cartDrawer.classList.remove('translate-x-full');
     renderCartDrawer();
@@ -1783,6 +1869,7 @@ function closeCart() {
 function clearCart() {
     if (state.cart.length === 0) return;
     if (confirm("Clear all selected questions from your cart?")) {
+        triggerHaptic('medium');
         state.cart = [];
         saveCart();
         renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
@@ -2135,6 +2222,8 @@ const examsState = {
 function switchView(viewName, param) {
     const navTabBank = document.getElementById('nav-tab-bank');
     const navTabExams = document.getElementById('nav-tab-exams');
+    const mobNavBank = document.getElementById('mob-nav-bank');
+    const mobNavExams = document.getElementById('mob-nav-exams');
     const bankView = document.getElementById('bank-view');
     const examsView = document.getElementById('exams-view');
     const examsDashView = document.getElementById('exams-dashboard-view');
@@ -2149,6 +2238,10 @@ function switchView(viewName, param) {
         if (navTabBank && navTabExams) {
             navTabBank.className = "px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center space-x-1.5 cursor-pointer";
             navTabExams.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-brand-700 dark:text-brand-300 bg-white dark:bg-slate-700 shadow-xs flex items-center space-x-1.5 cursor-pointer";
+        }
+        if (mobNavBank && mobNavExams) {
+            mobNavBank.className = "flex flex-col items-center justify-center py-1 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white font-medium pressable cursor-pointer";
+            mobNavExams.className = "relative flex flex-col items-center justify-center py-1 text-brand-600 dark:text-brand-400 font-bold pressable cursor-pointer";
         }
 
         if (viewName === 'submissions' && param) {
@@ -2167,6 +2260,10 @@ function switchView(viewName, param) {
         if (navTabBank && navTabExams) {
             navTabBank.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-brand-700 dark:text-brand-300 bg-white dark:bg-slate-700 shadow-xs flex items-center space-x-1.5 cursor-pointer";
             navTabExams.className = "px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center space-x-1.5 cursor-pointer";
+        }
+        if (mobNavBank && mobNavExams) {
+            mobNavBank.className = "flex flex-col items-center justify-center py-1 text-brand-600 dark:text-brand-400 font-bold pressable cursor-pointer";
+            mobNavExams.className = "relative flex flex-col items-center justify-center py-1 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white font-medium pressable cursor-pointer";
         }
     }
 }
@@ -2391,17 +2488,55 @@ function showExamSuccessModal(data) {
 }
 
 // 5. Load and Render Exams Dashboard
+function renderExamsSkeleton(container) {
+    if (!container) return;
+    container.innerHTML = `
+        <div class="p-4 sm:p-6 space-y-3">
+            ${Array.from({ length: 4 }).map(() => `
+                <div class="p-4 rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-800/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div class="space-y-2 flex-1">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-20 h-6 rounded-lg skeleton-shimmer"></div>
+                            <div class="w-36 h-5 rounded-md skeleton-shimmer"></div>
+                        </div>
+                        <div class="w-48 h-4 rounded skeleton-shimmer"></div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <div class="w-20 h-6 rounded-full skeleton-shimmer"></div>
+                        <div class="w-24 h-8 rounded-xl skeleton-shimmer"></div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderSubmissionsSkeleton(container) {
+    if (!container) return;
+    container.innerHTML = `
+        <div class="p-4 sm:p-6 space-y-3">
+            ${Array.from({ length: 4 }).map(() => `
+                <div class="p-4 rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-800/60 shadow-xs flex items-center justify-between">
+                    <div class="space-y-2">
+                        <div class="w-32 h-5 rounded-md skeleton-shimmer"></div>
+                        <div class="w-24 h-4 rounded skeleton-shimmer"></div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <div class="w-16 h-6 rounded-full skeleton-shimmer"></div>
+                        <div class="w-20 h-8 rounded-xl skeleton-shimmer"></div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
 async function loadExamsList() {
     const statusFilter = document.getElementById('filter-exam-status')?.value || "";
     const container = document.getElementById('exams-table-container');
     if (!container) return;
 
-    container.innerHTML = `
-        <div class="p-8 text-center text-slate-400">
-            <span class="inline-block animate-spin text-2xl mb-2">⏳</span>
-            <p class="text-xs font-semibold">Loading digital exams...</p>
-        </div>
-    `;
+    renderExamsSkeleton(container);
 
     try {
         let url = '/api/exams?limit=100';
@@ -2429,13 +2564,20 @@ async function loadExamsList() {
         if (statPending) statPending.textContent = pendingGrading;
 
         const navBadge = document.getElementById('nav-exams-badge');
-        if (navBadge) {
-            if (pendingGrading > 0) {
+        const mobNavBadge = document.getElementById('mob-exams-badge');
+        if (pendingGrading > 0) {
+            if (navBadge) {
                 navBadge.textContent = pendingGrading;
                 navBadge.classList.remove('hidden');
-            } else {
-                navBadge.classList.add('hidden');
             }
+            if (mobNavBadge) {
+                mobNavBadge.textContent = pendingGrading;
+                mobNavBadge.classList.remove('hidden');
+            }
+        } else {
+            if (navBadge) navBadge.classList.add('hidden');
+            if (mobNavBadge) mobNavBadge.classList.add('hidden');
+        }
         }
 
         renderExamsList(examsState.currentExams);
@@ -2585,12 +2727,7 @@ async function loadSubmissionsList(examId) {
     const container = document.getElementById('submissions-table-container');
     if (!container) return;
 
-    container.innerHTML = `
-        <div class="p-8 text-center text-slate-400">
-            <span class="inline-block animate-spin text-2xl mb-2">⏳</span>
-            <p class="text-xs font-semibold">Loading student submissions...</p>
-        </div>
-    `;
+    renderSubmissionsSkeleton(container);
 
     try {
         const res = await apiFetch(`/api/exams/${examId}/submissions`);
