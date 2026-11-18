@@ -2578,7 +2578,6 @@ async function loadExamsList() {
             if (navBadge) navBadge.classList.add('hidden');
             if (mobNavBadge) mobNavBadge.classList.add('hidden');
         }
-        }
 
         renderExamsList(examsState.currentExams);
     } catch (err) {
