@@ -983,6 +983,16 @@ async def import_emergency_submission(
             alt_hash = hashlib.sha256(alt_raw.encode("utf-8")).hexdigest()
             if secrets.compare_digest(payload.integrity_hash.lower(), alt_hash.lower()):
                 valid_hash = True
+            elif payload.integrity_hash.lower().startswith("sha256fallback_"):
+                # Handle fallback hash when student device lacks window.crypto.subtle
+                poly_hash = 0
+                for char in expected_raw:
+                    poly_hash = (((poly_hash << 5) - poly_hash) + ord(char)) & 0xFFFFFFFF
+                    if poly_hash >= 0x80000000:
+                        poly_hash -= 0x100000000
+                expected_fallback = f"sha256fallback_{hex(abs(poly_hash))[2:]}"
+                if secrets.compare_digest(payload.integrity_hash.lower(), expected_fallback.lower()):
+                    valid_hash = True
 
         if not valid_hash:
             raise HTTPException(

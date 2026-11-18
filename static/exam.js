@@ -826,7 +826,15 @@
         if (container) {
             let touchStartX = 0;
             let touchStartY = 0;
+            let isFormInputTouch = false;
+
             container.addEventListener('touchstart', (e) => {
+                // Ignore gestures initiated inside editable inputs or interactive elements
+                if (e.target.closest('textarea, input, select, button, label, .no-swipe')) {
+                    isFormInputTouch = true;
+                    return;
+                }
+                isFormInputTouch = false;
                 if (e.changedTouches && e.changedTouches.length) {
                     touchStartX = e.changedTouches[0].screenX;
                     touchStartY = e.changedTouches[0].screenY;
@@ -834,6 +842,7 @@
             }, { passive: true });
 
             container.addEventListener('touchend', (e) => {
+                if (isFormInputTouch) return;
                 if (!e.changedTouches || !e.changedTouches.length) return;
                 const touchEndX = e.changedTouches[0].screenX;
                 const touchEndY = e.changedTouches[0].screenY;
@@ -1035,11 +1044,14 @@
             });
 
             if (!res.ok) {
-                const err = await res.json();
-                if (res.status === 400) {
-                    throw new Error(err.detail || 'Submission rejected by server.');
+                const err = await res.json().catch(() => ({}));
+                const errMsg = err.detail || `Server status ${res.status}`;
+                if (res.status === 413 || res.status === 400) {
+                    const error = new Error(errMsg);
+                    error.nonRetriable = true;
+                    throw error;
                 }
-                throw new Error(err.detail || `Server status ${res.status}`);
+                throw new Error(errMsg);
             }
 
             const data = await res.json();
@@ -1055,7 +1067,16 @@
             showToast('Exam submitted successfully! Receipt generated.', 'success');
         } catch (err) {
             console.warn(`Submission attempt ${attempt} failed:`, err);
-            if (err.message && (err.message.includes('already exists') || err.message.includes('not currently active'))) {
+            const msg = err.message || '';
+            const isNonRetriable = err.nonRetriable ||
+                msg.includes('already exists') ||
+                msg.includes('not currently active') ||
+                msg.includes('deadline has passed') ||
+                msg.includes('exceeds 12MB limit') ||
+                msg.includes('12MB');
+
+            if (isNonRetriable) {
+                if (examState.retryInterval) clearInterval(examState.retryInterval);
                 document.getElementById('retry-emergency-modal')?.classList.add('hidden');
                 examState.isSubmitting = false;
                 const submitBtn = document.getElementById('btn-trigger-submit');
@@ -1064,7 +1085,7 @@
                     submitBtn.innerHTML = `<span>Submit Exam 🚀</span>`;
                 }
                 triggerHaptic('error');
-                showToast(err.message, 'error', 5000);
+                showToast(msg, 'error', 6000);
             } else {
                 startAutoRetrySequence(attempt + 1);
             }

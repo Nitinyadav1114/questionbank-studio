@@ -58,9 +58,9 @@ class Database:
         """Context manager providing a resilient database connection with auto-closing, health checks, and retry."""
         if self.is_postgres:
             conn = None
-            is_new_conn = False
             last_err = None
             for attempt in range(3):
+                is_new_conn = False
                 try:
                     if self.pool is not None:
                         try:

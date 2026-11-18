@@ -929,18 +929,22 @@ function initMobileBottomDock() {
         });
     }
 
-    // Auto-hide mobile dock when on-screen keyboard is visible
+    // Auto-hide mobile dock when on-screen keyboard is visible (orientation-safe)
     if (window.visualViewport) {
-        let initialHeight = window.visualViewport.height;
-        window.visualViewport.addEventListener('resize', () => {
+        const handleViewportResize = () => {
             const dock = document.getElementById('mobile-bottom-dock');
             if (!dock) return;
-            // When virtual keyboard opens on mobile, height drops significantly (> 150px)
-            if (window.visualViewport.height < initialHeight - 150) {
+            // Virtual keyboard reduces visualViewport height relative to window.innerHeight
+            const isKeyboardOpen = (window.innerHeight - window.visualViewport.height) > 150;
+            if (isKeyboardOpen) {
                 dock.classList.add('translate-y-full');
             } else {
                 dock.classList.remove('translate-y-full');
             }
+        };
+        window.visualViewport.addEventListener('resize', handleViewportResize);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(handleViewportResize, 200);
         });
     }
 }

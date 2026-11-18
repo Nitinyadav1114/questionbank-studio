@@ -153,6 +153,35 @@ def test_emergency_offline_submission_import_and_integrity_check():
     assert dup_res.status_code == 400
     assert "already exists" in dup_res.json()["detail"]
 
+    # Case 5: Valid Fallback Hash (when client browser lacks crypto.subtle)
+    fb_roll = "FALLBACK-002"
+    fb_raw_sig = f"{exam_code.upper()}:{fb_roll.upper()}:{client_timestamp}:{len(answers_list)}"
+    poly_hash = 0
+    for char in fb_raw_sig:
+        poly_hash = (((poly_hash << 5) - poly_hash) + ord(char)) & 0xFFFFFFFF
+        if poly_hash >= 0x80000000:
+            poly_hash -= 0x100000000
+    fb_hash = f"sha256fallback_{hex(abs(poly_hash))[2:]}"
+
+    fb_payload = {
+        "exam_code": exam_code,
+        "student_name": "Bob Fallback",
+        "roll_number": fb_roll,
+        "section": "B",
+        "time_taken_seconds": 1200,
+        "client_timestamp": client_timestamp,
+        "answers": answers_list,
+        "integrity_hash": fb_hash
+    }
+    fb_res = client.post(
+        f"/api/exams/{exam_code}/import-emergency",
+        headers=admin_headers,
+        json=fb_payload
+    )
+    assert fb_res.status_code == 200
+    assert fb_res.json()["is_emergency"] is True
+    assert fb_res.json()["roll_number"] == fb_roll
+
 
 def test_full_system_disaster_recovery_backup():
     """Verifies that GET /api/admin/backup exports complete platform JSON archive."""
