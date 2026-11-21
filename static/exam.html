@@ -389,10 +389,19 @@
         <div id="student-photo-zoom-modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[60] hidden flex flex-col p-3 sm:p-6">
             <div class="flex items-center justify-between text-white pb-3 shrink-0">
                 <span class="text-sm font-bold">Answer Sheet Inspection</span>
-                <button type="button" id="close-student-photo-zoom" class="p-2 text-2xl leading-none text-slate-400 hover:text-white cursor-pointer">&times;</button>
+                <div class="flex items-center space-x-2">
+                    <button type="button" id="btn-rotate-student-photo" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-white font-semibold transition cursor-pointer flex items-center space-x-1 shadow-xs">
+                        <span>🔄</span>
+                        <span>Rotate (90°)</span>
+                    </button>
+                    <button type="button" id="btn-reset-student-photo" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 hover:text-white font-semibold transition cursor-pointer">
+                        Reset
+                    </button>
+                    <button type="button" id="close-student-photo-zoom" class="p-2 text-2xl leading-none text-slate-400 hover:text-white cursor-pointer ml-1">&times;</button>
+                </div>
             </div>
-            <div class="flex-1 overflow-auto flex items-center justify-center p-2">
-                <img id="student-photo-zoom-img" src="" alt="Answer Sheet Photo" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
+            <div id="student-photo-zoom-stage" class="flex-1 overflow-auto flex items-center justify-center p-2">
+                <img id="student-photo-zoom-img" src="" alt="Answer Sheet Photo" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl transition-transform duration-200">
             </div>
         </div>
 
@@ -435,6 +444,6 @@
     </div>
 
     <!-- Student Exam Room Script -->
-    <script src="/static/exam.js?v=3.6.2"></script>
+    <script src="/static/exam.js?v=3.6.3"></script>
 </body>
 </html>

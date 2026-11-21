@@ -25,7 +25,9 @@
         retryInterval: null,
         lastPayloadAnswers: null,
         lastTimeTakenSecs: 0,
-        currentQuestionIndex: 0
+        currentQuestionIndex: 0,
+        alerted5Min: false,
+        alerted1Min: false
     };
 
     // Tactile Haptic Touch Feedback Utility
@@ -416,6 +418,12 @@
         if (indicator) {
             const now = new Date(getServerNow());
             indicator.textContent = `✓ Saved locally at ${now.toLocaleTimeString()}`;
+            indicator.classList.remove('text-slate-400');
+            indicator.classList.add('text-emerald-500', 'dark:text-emerald-400');
+            setTimeout(() => {
+                indicator.classList.remove('text-emerald-500', 'dark:text-emerald-400');
+                indicator.classList.add('text-slate-400');
+            }, 1200);
         }
     }
 
@@ -506,11 +514,21 @@
                 display.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
             }
 
-            // Urgency color cues
+            // Urgency color cues and tactile countdown alerts
             if (totalSecs <= 60) {
                 pill.className = "flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-rose-600 text-white font-mono font-extrabold text-xs sm:text-sm animate-pulse shadow-md";
+                if (!examState.alerted1Min) {
+                    examState.alerted1Min = true;
+                    triggerHaptic('error');
+                    showToast('🚨 1 Minute Remaining! Prepare to submit your exam.', 'error', 8000);
+                }
             } else if (totalSecs <= 300) {
                 pill.className = "flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-200 border border-amber-300 font-mono font-bold text-xs sm:text-sm";
+                if (!examState.alerted5Min) {
+                    examState.alerted5Min = true;
+                    triggerHaptic('medium');
+                    showToast('⏳ 5 Minutes Remaining! Please review your answers.', 'warning', 6000);
+                }
             } else {
                 pill.className = "flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shadow-xs font-mono font-bold text-xs sm:text-sm text-slate-800 dark:text-slate-100";
             }
@@ -518,6 +536,13 @@
 
         updateTimer();
         examState.timerInterval = setInterval(updateTimer, 1000);
+    }
+
+    function formatWordCharCount(text) {
+        const trimmed = (text || '').trim();
+        const words = trimmed ? trimmed.split(/\s+/).length : 0;
+        const chars = (text || '').length;
+        return `${words} word${words === 1 ? '' : 's'} • ${chars} char${chars === 1 ? '' : 's'}`;
     }
 
     // 9. Render Question Cards
@@ -555,9 +580,14 @@
 
                     <!-- Typed Answer Input -->
                     <div class="space-y-1.5">
-                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                            Typed Answer:
-                        </label>
+                        <div class="flex items-center justify-between">
+                            <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                                Typed Answer:
+                            </label>
+                            <span id="q-counter-${q.id}" class="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                                ${formatWordCharCount(savedAns.typed_answer || '')}
+                            </span>
+                        </div>
                         <textarea id="q-text-${q.id}" rows="4" placeholder="Type your answer here..." class="w-full text-xs sm:text-sm px-4 py-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 leading-relaxed">${escapeHtml(savedAns.typed_answer || '')}</textarea>
                     </div>
 
@@ -587,6 +617,8 @@
             const textarea = document.getElementById(`q-text-${q.id}`);
             if (textarea) {
                 textarea.addEventListener('input', () => {
+                    const counter = document.getElementById(`q-counter-${q.id}`);
+                    if (counter) counter.textContent = formatWordCharCount(textarea.value);
                     handleAnswerUpdate(q.id, textarea.value, null);
                 });
             }
@@ -1272,17 +1304,67 @@
         }).join('');
     }
 
-    // 15. Student Photo Zoom Modal
+    // 15. Student Photo Zoom Modal & Image Rotation Inspector
+    let studentPhotoRotation = 0;
+
     window.openStudentPhotoZoom = function(src) {
         const modal = document.getElementById('student-photo-zoom-modal');
         const img = document.getElementById('student-photo-zoom-img');
         if (!modal || !img) return;
+        studentPhotoRotation = 0;
+        img.style.transform = 'rotate(0deg)';
         img.src = src;
         modal.classList.remove('hidden');
     };
 
+    document.getElementById('btn-rotate-student-photo')?.addEventListener('click', () => {
+        const img = document.getElementById('student-photo-zoom-img');
+        if (!img) return;
+        studentPhotoRotation = (studentPhotoRotation + 90) % 360;
+        img.style.transform = `rotate(${studentPhotoRotation}deg)`;
+        triggerHaptic('light');
+    });
+
+    document.getElementById('btn-reset-student-photo')?.addEventListener('click', () => {
+        const img = document.getElementById('student-photo-zoom-img');
+        if (!img) return;
+        studentPhotoRotation = 0;
+        img.style.transform = 'rotate(0deg)';
+        triggerHaptic('light');
+    });
+
     document.getElementById('close-student-photo-zoom')?.addEventListener('click', () => {
         document.getElementById('student-photo-zoom-modal')?.classList.add('hidden');
+    });
+
+    // Backdrop dismissal
+    document.getElementById('student-photo-zoom-modal')?.addEventListener('click', (e) => {
+        const modal = document.getElementById('student-photo-zoom-modal');
+        const stage = document.getElementById('student-photo-zoom-stage');
+        if (e.target === modal || e.target === stage) {
+            modal.classList.add('hidden');
+        }
+    });
+
+    // Global Escape key listener for student exam room
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const zoomModal = document.getElementById('student-photo-zoom-modal');
+            if (zoomModal && !zoomModal.classList.contains('hidden')) {
+                zoomModal.classList.add('hidden');
+                return;
+            }
+            const confirmModal = document.getElementById('submit-confirm-modal');
+            if (confirmModal && !confirmModal.classList.contains('hidden')) {
+                confirmModal.classList.add('hidden');
+                return;
+            }
+            const retryModal = document.getElementById('retry-emergency-modal');
+            if (retryModal && !retryModal.classList.contains('hidden')) {
+                retryModal.classList.add('hidden');
+                return;
+            }
+        }
     });
 
     // Utility

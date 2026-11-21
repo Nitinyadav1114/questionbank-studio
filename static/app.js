@@ -20,7 +20,8 @@ const state = {
         source: ''
     },
     pageCache: new Map(),
-    maxCacheEntries: 40
+    maxCacheEntries: 40,
+    expandedCartItems: new Set()
 };
 
 // Tactile Haptic Touch Feedback Utility
@@ -64,6 +65,10 @@ const styleNormalBtn = document.getElementById('style-normal-btn');
 const styleDesc = document.getElementById('style-desc');
 
 const searchInput = document.getElementById('search-input');
+const clearSearchBtn = document.getElementById('clear-search-btn');
+const activeFiltersBar = document.getElementById('active-filters-bar');
+const activeFilterPills = document.getElementById('active-filter-pills');
+const resetFiltersBtn = document.getElementById('reset-filters-btn');
 const densityComfortableBtn = document.getElementById('density-comfortable-btn');
 const densityCompactBtn = document.getElementById('density-compact-btn');
 const filterSubject = document.getElementById('filter-subject');
@@ -1000,7 +1005,25 @@ function setupEventListeners() {
 
     // Search and Filter Events (Debounced search)
     let searchTimeout;
+    if (clearSearchBtn) {
+        clearSearchBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            clearSearchBtn.classList.add('hidden');
+            state.filters.search = '';
+            state.currentPage = 1;
+            triggerHaptic('light');
+            loadQuestions();
+        });
+    }
+
+    if (resetFiltersBtn) {
+        resetFiltersBtn.addEventListener('click', resetAllFilters);
+    }
+
     searchInput.addEventListener('input', (e) => {
+        if (clearSearchBtn) {
+            clearSearchBtn.classList.toggle('hidden', !e.target.value.trim());
+        }
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             state.filters.search = e.target.value;
@@ -1041,6 +1064,15 @@ function setupEventListeners() {
             loadQuestions();
         }
     });
+
+    // Paper Title Draft Persistence
+    if (paperTitleInput) {
+        const savedTitle = localStorage.getItem('qb_paper_title');
+        if (savedTitle) paperTitleInput.value = savedTitle;
+        paperTitleInput.addEventListener('input', () => {
+            localStorage.setItem('qb_paper_title', paperTitleInput.value);
+        });
+    }
 
     // Cart Drawer Controls
     openCartBtn.addEventListener('click', openCart);
@@ -1141,36 +1173,88 @@ function setupEventListeners() {
         });
     }
 
-    // User Management Modal Events
-    if (closeUserMgmtBtn) closeUserMgmtBtn.addEventListener('click', closeUserMgmtModal);
-    if (userMgmtModal) {
-        userMgmtModal.addEventListener('click', (e) => {
-            if (e.target === userMgmtModal) closeUserMgmtModal();
-        });
-    }
+    // User Management Form submit
     if (createUserForm) createUserForm.addEventListener('submit', handleCreateUserSubmit);
-
-    // Change Password Modal Events
-    if (closeChangePwdBtn) closeChangePwdBtn.addEventListener('click', closeChangePasswordModal);
-    if (cancelChangePwdBtn) cancelChangePwdBtn.addEventListener('click', closeChangePasswordModal);
-    if (changePasswordModal) {
-        changePasswordModal.addEventListener('click', (e) => {
-            if (e.target === changePasswordModal) closeChangePasswordModal();
-        });
-    }
     if (changePwdForm) changePwdForm.addEventListener('submit', handleChangePasswordSubmit);
 
-    // Global Escape Key to dismiss modals / dropdowns
+    // Modal Close Buttons
+    if (closeUserMgmtBtn) closeUserMgmtBtn.addEventListener('click', closeUserMgmtModal);
+    if (closeChangePwdBtn) closeChangePwdBtn.addEventListener('click', closeChangePasswordModal);
+    if (cancelChangePwdBtn) cancelChangePwdBtn.addEventListener('click', closeChangePasswordModal);
+
+    // Universal Outside-Backdrop Click Dismissal for all Modals
+    const modalBackdropConfigs = [
+        { id: 'edit-modal', close: closeEditModal },
+        { id: 'add-modal', close: closeAddModal },
+        { id: 'user-mgmt-modal', close: closeUserMgmtModal },
+        { id: 'change-password-modal', close: closeChangePasswordModal },
+        { id: 'exam-setup-modal', close: () => document.getElementById('exam-setup-modal')?.classList.add('hidden') },
+        { id: 'exam-success-modal', close: () => document.getElementById('exam-success-modal')?.classList.add('hidden') },
+        { id: 'grading-workspace-modal', close: safeCloseGradingStudio },
+        { id: 'photo-zoom-modal', close: () => document.getElementById('photo-zoom-modal')?.classList.add('hidden') },
+        { id: 'exam-qr-modal', close: () => document.getElementById('exam-qr-modal')?.classList.add('hidden') }
+    ];
+
+    modalBackdropConfigs.forEach(({ id, close }) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('click', (e) => {
+                if (e.target === el) close();
+            });
+        }
+    });
+
+    // Global Unified Escape Key to dismiss topmost active modal / drawer / dropdown
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            if (userDropdownMenu && !userDropdownMenu.classList.contains('hidden')) {
-                userDropdownMenu.classList.add('hidden');
+            const photoZoom = document.getElementById('photo-zoom-modal');
+            if (photoZoom && !photoZoom.classList.contains('hidden')) {
+                photoZoom.classList.add('hidden');
+                return;
+            }
+            const examQr = document.getElementById('exam-qr-modal');
+            if (examQr && !examQr.classList.contains('hidden')) {
+                examQr.classList.add('hidden');
+                return;
+            }
+            const grading = document.getElementById('grading-workspace-modal');
+            if (grading && !grading.classList.contains('hidden')) {
+                safeCloseGradingStudio();
+                return;
+            }
+            const examSuccess = document.getElementById('exam-success-modal');
+            if (examSuccess && !examSuccess.classList.contains('hidden')) {
+                examSuccess.classList.add('hidden');
+                return;
+            }
+            const examSetup = document.getElementById('exam-setup-modal');
+            if (examSetup && !examSetup.classList.contains('hidden')) {
+                examSetup.classList.add('hidden');
+                return;
             }
             if (userMgmtModal && !userMgmtModal.classList.contains('hidden')) {
                 closeUserMgmtModal();
+                return;
             }
             if (changePasswordModal && !changePasswordModal.classList.contains('hidden')) {
                 closeChangePasswordModal();
+                return;
+            }
+            if (editModal && !editModal.classList.contains('hidden')) {
+                closeEditModal();
+                return;
+            }
+            if (addModal && !addModal.classList.contains('hidden')) {
+                closeAddModal();
+                return;
+            }
+            if (cartDrawer && !cartDrawer.classList.contains('translate-x-full')) {
+                closeCart();
+                return;
+            }
+            if (userDropdownMenu && !userDropdownMenu.classList.contains('hidden')) {
+                userDropdownMenu.classList.add('hidden');
+                return;
             }
         }
     });
@@ -1403,8 +1487,103 @@ function renderSkeletonCards(count = 4) {
     `).join('');
 }
 
+// Active Filters Bar & Reset Controller
+function updateActiveFiltersBar() {
+    if (!activeFiltersBar || !activeFilterPills) return;
+    activeFilterPills.innerHTML = '';
+    let count = 0;
+
+    if (state.filters.search) {
+        count++;
+        const pill = document.createElement('span');
+        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800/60 text-xs font-semibold shadow-2xs";
+        pill.innerHTML = `<span>🔍 "${escapeHtml(state.filters.search)}"</span><button type="button" class="hover:text-brand-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Clear search">✕</button>`;
+        pill.querySelector('button').addEventListener('click', () => {
+            searchInput.value = '';
+            if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
+            state.filters.search = '';
+            state.currentPage = 1;
+            triggerHaptic('light');
+            loadQuestions();
+        });
+        activeFilterPills.appendChild(pill);
+    }
+
+    if (state.filters.subject) {
+        count++;
+        const pill = document.createElement('span');
+        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shadow-2xs";
+        pill.innerHTML = `<span>📚 ${escapeHtml(state.filters.subject)}</span><button type="button" class="hover:text-slate-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Remove subject filter">✕</button>`;
+        pill.querySelector('button').addEventListener('click', () => {
+            filterSubject.value = '';
+            state.filters.subject = '';
+            state.currentPage = 1;
+            triggerHaptic('light');
+            loadQuestions();
+        });
+        activeFilterPills.appendChild(pill);
+    }
+
+    if (state.filters.topic) {
+        count++;
+        const pill = document.createElement('span');
+        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shadow-2xs";
+        pill.innerHTML = `<span>🏷️ ${escapeHtml(state.filters.topic)}</span><button type="button" class="hover:text-slate-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Remove topic filter">✕</button>`;
+        pill.querySelector('button').addEventListener('click', () => {
+            filterTopic.value = '';
+            state.filters.topic = '';
+            state.currentPage = 1;
+            triggerHaptic('light');
+            loadQuestions();
+        });
+        activeFilterPills.appendChild(pill);
+    }
+
+    if (state.filters.source) {
+        count++;
+        const pill = document.createElement('span');
+        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shadow-2xs";
+        pill.innerHTML = `<span>📄 ${escapeHtml(state.filters.source)}</span><button type="button" class="hover:text-slate-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Remove source filter">✕</button>`;
+        pill.querySelector('button').addEventListener('click', () => {
+            filterSource.value = '';
+            state.filters.source = '';
+            state.currentPage = 1;
+            triggerHaptic('light');
+            loadQuestions();
+        });
+        activeFilterPills.appendChild(pill);
+    }
+
+    if (activeFiltersBadge) {
+        activeFiltersBadge.textContent = count;
+        activeFiltersBadge.classList.toggle('hidden', count === 0);
+    }
+
+    if (count > 0) {
+        activeFiltersBar.classList.remove('hidden');
+    } else {
+        activeFiltersBar.classList.add('hidden');
+    }
+}
+
+function resetAllFilters() {
+    searchInput.value = '';
+    if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
+    filterSubject.value = '';
+    filterTopic.value = '';
+    filterSource.value = '';
+    state.filters.search = '';
+    state.filters.subject = '';
+    state.filters.topic = '';
+    state.filters.source = '';
+    state.currentPage = 1;
+    triggerHaptic('light');
+    loadQuestions();
+}
+
 // Load Questions List with Client-Side Page Caching
 async function loadQuestions(skipCache = false) {
+    updateActiveFiltersBar();
     const cacheKey = getPageCacheKey(state.currentPage, state.limit, state.filters);
 
     if (!skipCache && state.pageCache.has(cacheKey)) {
@@ -1905,15 +2084,26 @@ function renderCartDrawer() {
     exportPdfBtn.disabled = false;
     exportPdfBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-rose-600/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm";
 
-    cartItemsContainer.innerHTML = state.cart.map((item, index) => `
+    cartItemsContainer.innerHTML = state.cart.map((item, index) => {
+        const isExpanded = state.expandedCartItems && state.expandedCartItems.has(index);
+        const isLong = (item.question_text || '').length > 80;
+
+        return `
         <div class="bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 rounded-xl p-3 flex items-start justify-between gap-3 shadow-xs">
-            <div class="flex items-start space-x-2 flex-1">
+            <div class="flex items-start space-x-2 flex-1 min-w-0">
                 <span class="w-5 h-5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
                     ${index + 1}
                 </span>
-                <p class="text-xs text-slate-800 dark:text-slate-100 leading-snug line-clamp-3">
-                    ${escapeHtml(item.question_text)}
-                </p>
+                <div class="min-w-0 flex-1">
+                    <p class="text-xs text-slate-800 dark:text-slate-100 leading-snug ${isExpanded ? '' : 'line-clamp-2'}">
+                        ${escapeHtml(item.question_text)}
+                    </p>
+                    ${isLong ? `
+                        <button type="button" onclick="toggleCartTextExpand(${index})" class="text-[10px] text-brand-600 dark:text-brand-400 font-semibold hover:underline mt-0.5 cursor-pointer">
+                            ${isExpanded ? 'Show less' : 'Show full'}
+                        </button>
+                    ` : ''}
+                </div>
             </div>
 
             <!-- Controls: Move Up, Move Down, Remove with comfortable touch targets -->
@@ -1929,8 +2119,19 @@ function renderCartDrawer() {
                 </button>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 }
+
+window.toggleCartTextExpand = function(index) {
+    if (!state.expandedCartItems) state.expandedCartItems = new Set();
+    if (state.expandedCartItems.has(index)) {
+        state.expandedCartItems.delete(index);
+    } else {
+        state.expandedCartItems.add(index);
+    }
+    renderCartDrawer();
+};
 
 window.moveCartItem = function(index, direction) {
     const targetIndex = index + direction;
@@ -1959,12 +2160,21 @@ function setTemplateMode(useTemplate) {
     }
 }
 
-// Unified Export Function for Word and PDF
+// Unified Export Function for Word and PDF with Loading States
 async function downloadQuestions(questionIds, format = 'docx', title = '') {
     if (!questionIds || questionIds.length === 0) return;
 
     const isPdf = format.toLowerCase() === 'pdf';
     const label = isPdf ? 'PDF' : 'Word';
+
+    const activeBtn = isPdf ? exportPdfBtn : exportDocxBtn;
+    const originalContent = activeBtn ? activeBtn.innerHTML : '';
+    if (activeBtn) {
+        activeBtn.disabled = true;
+        activeBtn.innerHTML = `<span>Generating ${label}... ⏳</span>`;
+    }
+    if (exportDocxBtn) exportDocxBtn.disabled = true;
+    if (exportPdfBtn) exportPdfBtn.disabled = true;
 
     try {
         const response = await apiFetch('/api/export', {
@@ -1995,8 +2205,19 @@ async function downloadQuestions(questionIds, format = 'docx', title = '') {
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
 
+        triggerHaptic('success');
+        showToast(`${label} document generated successfully!`, "success");
     } catch (err) {
+        triggerHaptic('error');
         showToast(`Failed to export ${label}: ${err.message}`, "error");
+    } finally {
+        if (activeBtn && originalContent) {
+            activeBtn.innerHTML = originalContent;
+        }
+        if (state.cart.length > 0) {
+            if (exportDocxBtn) exportDocxBtn.disabled = false;
+            if (exportPdfBtn) exportPdfBtn.disabled = false;
+        }
     }
 }
 
@@ -2219,7 +2440,8 @@ const examsState = {
     activeExamId: null,
     activeSubmissions: [],
     activeSubmissionDetail: null,
-    photoZoom: { scale: 1.0, rotation: 0 }
+    photoZoom: { scale: 1.0, rotation: 0 },
+    isGradingDirty: false
 };
 
 // 1. Hash Routing and Tab Switching
@@ -2653,7 +2875,9 @@ function renderExamsList(exams) {
                             <td class="py-3.5 px-4">
                                 <button onclick="openExamSubmissions(${e.id})" class="inline-flex items-center space-x-1 font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline cursor-pointer">
                                     <span>${e.submissions_count || 0} Submissions</span>
-                                    ${e.pending_count > 0 ? `<span class="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] rounded-full font-bold">${e.pending_count} pending</span>` : ''}
+                                    ${e.pending_count > 0 
+                                        ? `<span class="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] rounded-full font-bold">${(e.submissions_count || 0) - e.pending_count}/${e.submissions_count || 0} Graded (${e.pending_count} pending)</span>` 
+                                        : (e.submissions_count > 0 ? `<span class="px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] rounded-full font-bold">All Graded ✓</span>` : '')}
                                 </button>
                             </td>
                             <td class="py-3.5 px-4">
@@ -2819,8 +3043,21 @@ function renderSubmissionsTable(submissions, exam) {
                                     ${isGraded ? 'Graded ✓' : 'Pending Evaluation'}
                                 </span>
                             </td>
-                            <td class="py-3.5 px-4 font-mono font-bold ${isGraded ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}">
-                                ${isGraded ? `${s.total_score} / ${s.total_marks}` : `— / ${s.total_marks}`}
+                            <td class="py-3.5 px-4 font-mono font-bold ${isGraded ? 'text-slate-800 dark:text-slate-100' : 'text-slate-400'}">
+                                ${isGraded ? `
+                                    <div class="flex items-center space-x-1.5">
+                                        <span>${s.total_score} / ${s.total_marks}</span>
+                                        <span class="inline-block px-1.5 py-0.2 rounded-md text-[10px] font-sans font-bold ${
+                                            (s.total_marks > 0 ? (s.total_score / s.total_marks) * 100 : 0) >= 75
+                                                ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300'
+                                                : ((s.total_marks > 0 ? (s.total_score / s.total_marks) * 100 : 0) >= 40
+                                                    ? 'bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300'
+                                                    : 'bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300')
+                                        }">
+                                            ${s.total_marks > 0 ? Math.round((s.total_score / s.total_marks) * 100) : 0}%
+                                        </span>
+                                    </div>
+                                ` : `— / ${s.total_marks}`}
                             </td>
                             <td class="py-3.5 px-4 text-right">
                                 <button onclick="openGradingStudio(${s.id})" class="px-3.5 py-1.5 rounded-xl font-bold transition shadow-xs active:scale-95 cursor-pointer ${
@@ -2859,6 +3096,7 @@ window.openGradingStudio = async function(submissionId) {
 
         const sub = await res.json();
         examsState.activeSubmissionDetail = sub;
+        examsState.isGradingDirty = false;
 
         // Populate header
         document.getElementById('grade-student-name').textContent = sub.student_name;
@@ -2952,10 +3190,23 @@ function renderGradingQuestions(answers) {
 
                 <!-- Teacher Marks & Feedback Inputs -->
                 <div class="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/60 dark:bg-slate-950/30 -mx-5 -mb-5 p-4 rounded-b-2xl">
-                    <div class="flex items-center space-x-2">
+                    <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
                         <label class="text-xs font-bold text-slate-700 dark:text-slate-300">Awarded Marks:</label>
                         <input type="number" min="0" max="${ans.max_marks}" step="0.5" value="${defaultMarks}" data-max="${ans.max_marks}" class="grade-marks-input w-20 text-center font-bold text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 text-sm">
                         <span class="text-xs text-slate-400">/ ${ans.max_marks} pts</span>
+
+                        <!-- Quick-Grade Shortcuts -->
+                        <div class="flex items-center space-x-1 pl-1">
+                            <button type="button" onclick="setQuickGrade(this, ${ans.max_marks})" class="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 border border-emerald-200 dark:border-emerald-800 transition cursor-pointer" title="Award full marks">
+                                Full [${ans.max_marks}]
+                            </button>
+                            <button type="button" onclick="setQuickGrade(this, ${ans.max_marks / 2})" class="px-2 py-1 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/80 border border-amber-200 dark:border-amber-800 transition cursor-pointer" title="Award half marks">
+                                Half [${ans.max_marks / 2}]
+                            </button>
+                            <button type="button" onclick="setQuickGrade(this, 0)" class="px-2 py-1 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/80 border border-rose-200 dark:border-rose-800 transition cursor-pointer" title="Award zero marks">
+                                Zero [0]
+                            </button>
+                        </div>
                     </div>
                     <div class="flex-1 max-w-md">
                         <input type="text" placeholder="Question-specific feedback / note..." value="${escapeHtml(ans.feedback || '')}" class="grade-feedback-input w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
@@ -2965,16 +3216,44 @@ function renderGradingQuestions(answers) {
         `;
     }).join('');
 
-    // Attach live score calculation listener
+    // Attach live score calculation listener and dirty state tracker
     container.querySelectorAll('.grade-marks-input').forEach(inp => {
         inp.addEventListener('input', () => {
             const max = parseFloat(inp.getAttribute('data-max') || 100);
             let val = parseFloat(inp.value || 0);
             if (val > max) inp.value = max;
             if (val < 0) inp.value = 0;
+            examsState.isGradingDirty = true;
             updateLiveAwardedScore();
         });
     });
+
+    container.querySelectorAll('.grade-feedback-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            examsState.isGradingDirty = true;
+        });
+    });
+}
+
+window.setQuickGrade = function(btn, marks) {
+    const card = btn.closest('[data-q-id]');
+    if (!card) return;
+    const inp = card.querySelector('.grade-marks-input');
+    if (!inp) return;
+    inp.value = marks;
+    examsState.isGradingDirty = true;
+    updateLiveAwardedScore();
+    triggerHaptic('light');
+};
+
+function safeCloseGradingStudio() {
+    if (examsState.isGradingDirty) {
+        if (!confirm("You have unsaved grading evaluations. Are you sure you want to close without publishing?")) {
+            return;
+        }
+    }
+    examsState.isGradingDirty = false;
+    document.getElementById('grading-workspace-modal')?.classList.add('hidden');
 }
 
 function updateLiveAwardedScore() {
@@ -3025,7 +3304,9 @@ async function handlePublishEvaluation() {
             throw new Error(err.detail || 'Failed to publish grades');
         }
 
+        examsState.isGradingDirty = false;
         document.getElementById('grading-workspace-modal')?.classList.add('hidden');
+        triggerHaptic('success');
         showToast("Student grades published successfully! 🎉", "success");
 
         // Refresh submissions table
@@ -3213,12 +3494,8 @@ function initExamsStudio() {
     });
 
     // Grading modal events
-    document.getElementById('close-grading-modal')?.addEventListener('click', () => {
-        document.getElementById('grading-workspace-modal')?.classList.add('hidden');
-    });
-    document.getElementById('btn-cancel-grading')?.addEventListener('click', () => {
-        document.getElementById('grading-workspace-modal')?.classList.add('hidden');
-    });
+    document.getElementById('close-grading-modal')?.addEventListener('click', safeCloseGradingStudio);
+    document.getElementById('btn-cancel-grading')?.addEventListener('click', safeCloseGradingStudio);
     document.getElementById('btn-publish-evaluation')?.addEventListener('click', handlePublishEvaluation);
 
     // Photo zoom modal events
@@ -3246,14 +3523,6 @@ function initExamsStudio() {
     // Dashboard QR modal events
     document.getElementById('close-exam-qr-modal')?.addEventListener('click', () => {
         document.getElementById('exam-qr-modal')?.classList.add('hidden');
-    });
-
-    // Keyboard Esc shortcut
-    window.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            document.getElementById('photo-zoom-modal')?.classList.add('hidden');
-            document.getElementById('exam-qr-modal')?.classList.add('hidden');
-        }
     });
 
     // Initial route check

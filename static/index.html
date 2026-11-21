@@ -324,10 +324,11 @@
                 <!-- Search & Filters Toggle Row -->
                 <div class="flex items-center gap-2">
                     <div class="relative flex-1">
-                        <input type="text" id="search-input" placeholder="Search questions..." class="w-full text-sm pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <input type="text" id="search-input" placeholder="Search questions..." class="w-full text-sm pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                         <svg class="w-4 h-4 text-slate-400 absolute left-3 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
+                        <button id="clear-search-btn" type="button" class="hidden absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-full text-xs font-bold transition cursor-pointer" title="Clear search">✕</button>
                     </div>
 
                     <!-- View Density Switcher (Comfortable vs Compact) -->
@@ -377,6 +378,15 @@
                             <option value="">All Source Files</option>
                         </select>
                     </div>
+                </div>
+
+                <!-- Active Filters Status Bar -->
+                <div id="active-filters-bar" class="hidden flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-100 dark:border-slate-700/80 text-xs">
+                    <span class="text-slate-400 dark:text-slate-500 text-[11px] font-semibold">Active:</span>
+                    <div id="active-filter-pills" class="flex flex-wrap items-center gap-1.5"></div>
+                    <button id="reset-filters-btn" type="button" class="text-brand-600 dark:text-brand-400 font-bold hover:underline ml-auto text-xs cursor-pointer flex items-center space-x-1">
+                        <span>Reset All</span>
+                    </button>
                 </div>
             </div>
 
@@ -1050,6 +1060,6 @@
     </nav>
 
     <!-- Application Script -->
-    <script src="/static/app.js?v=3.6.2"></script>
+    <script src="/static/app.js?v=3.6.3"></script>
 </body>
 </html>
