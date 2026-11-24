@@ -1147,6 +1147,24 @@ def toggle_exam_status(id: int, current_user: dict = Depends(verify_auth)):
     }
 
 
+@app.patch("/api/exams/{id}/status")
+def update_exam_status(id: int, payload: dict, current_user: dict = Depends(verify_auth)):
+    """Sets exam status explicitly to 'active' or 'closed'."""
+    desired_status = (payload.get("status") or "").strip().lower()
+    if desired_status not in ("active", "closed"):
+        raise HTTPException(status_code=400, detail="Invalid status. Must be 'active' or 'closed'.")
+    exam = db.get_exam_by_id(id, include_questions=False)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    if exam["status"] != desired_status:
+        db.toggle_exam_status(id)
+    return {
+        "id": id,
+        "status": desired_status,
+        "message": f"Exam status updated to {desired_status}."
+    }
+
+
 @app.delete("/api/exams/{id}")
 def delete_exam(id: int, current_user: dict = Depends(verify_auth)):
     """Deletes an exam and cascades deletion to questions and submissions."""

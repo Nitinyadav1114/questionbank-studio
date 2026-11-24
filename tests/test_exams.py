@@ -303,6 +303,15 @@ def test_exam_status_toggle(client_with_temp_db):
     assert t2.status_code == 200
     assert t2.json()["status"] == "active"
 
+    # Direct idempotent status endpoint test
+    s_close = client.patch(f"/api/exams/{exam_id}/status", json={"status": "closed"})
+    assert s_close.status_code == 200
+    assert s_close.json()["status"] == "closed"
+
+    s_open = client.patch(f"/api/exams/{exam_id}/status", json={"status": "active"})
+    assert s_open.status_code == 200
+    assert s_open.json()["status"] == "active"
+
     # Submission now permitted
     sub_ok = client.post(f"/api/exams/{exam_code}/submit", json=sub_payload)
     assert sub_ok.status_code == 200
