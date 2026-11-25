@@ -15,10 +15,11 @@ venv/
 env/
 ENV/
 
-# Local databases (use cloud database or backup JSON for deployment)
+# Local databases & automated backup snapshots
 *.db
 *.db-wal
 *.db-shm
+backups/
 
 # IDE & Editor caches
 .vscode/

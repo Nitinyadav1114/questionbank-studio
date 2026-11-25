@@ -1,9 +1,25 @@
 // Squire Way - Question Bank Frontend Application Logic
 
 // Application State
+const defaultPaperHeader = {
+    institute_name: "The Squire's Way",
+    class_subject: '',
+    time_allowed: '3 Hours',
+    max_marks: '',
+    instructions: '',
+    show_header: true
+};
+
+let savedPaperHeader = { ...defaultPaperHeader };
+try {
+    const rawHeader = localStorage.getItem('qb_paper_header');
+    if (rawHeader) savedPaperHeader = { ...defaultPaperHeader, ...JSON.parse(rawHeader) };
+} catch (e) {}
+
 const state = {
     currentUser: JSON.parse(sessionStorage.getItem('qb_user') || 'null'),
     cart: JSON.parse(localStorage.getItem('qb_cart') || '[]'),
+    paperHeader: savedPaperHeader,
     selectedFiles: [],
     selectedIds: new Set(),
     useTemplate: true,
@@ -12,13 +28,20 @@ const state = {
     currentPage: 1,
     limit: 25,
     totalPages: 1,
+    totalQuestions: 0,
     currentQuestions: [],
     filters: {
         search: '',
+        class_level: '',
         subject: '',
         topic: '',
-        source: ''
+        question_type: '',
+        difficulty: '',
+        source: '',
+        needs_review: false,
+        sort_by: 'recent'
     },
+    previewItems: [],
     pageCache: new Map(),
     maxCacheEntries: 40,
     expandedCartItems: new Set()
@@ -43,12 +66,15 @@ const selectedFilesList = document.getElementById('selected-files-list');
 const filesContainer = document.getElementById('files-container');
 const uploadForm = document.getElementById('upload-form');
 const uploadBtn = document.getElementById('upload-btn');
+const uploadClassInput = document.getElementById('upload-class');
 const uploadSubjectInput = document.getElementById('upload-subject');
 const uploadTopicInput = document.getElementById('upload-topic');
 const uploadResultBanner = document.getElementById('upload-result-banner');
 
 const statTotal = document.getElementById('stat-total');
 const statMerged = document.getElementById('stat-merged');
+const statNeedsReview = document.getElementById('stat-needs-review');
+const statNeedsReviewCard = document.getElementById('stat-needs-review-card');
 const cartBadge = document.getElementById('cart-badge');
 const openCartBtn = document.getElementById('open-cart-btn');
 const closeCartBtn = document.getElementById('close-cart-btn');
@@ -56,6 +82,14 @@ const cartDrawer = document.getElementById('cart-drawer');
 const cartBackdrop = document.getElementById('cart-backdrop');
 const cartItemsContainer = document.getElementById('cart-items-container');
 const cartCountSubtitle = document.getElementById('cart-count-subtitle');
+const cartTotalMarksEl = document.getElementById('cart-total-marks');
+const addCartSectionBtn = document.getElementById('add-cart-section-btn');
+const cartShowHeaderCb = document.getElementById('cart-show-header-cb');
+const cartHeaderInstitute = document.getElementById('cart-header-institute');
+const cartHeaderClassSubject = document.getElementById('cart-header-class-subject');
+const cartHeaderTime = document.getElementById('cart-header-time');
+const cartHeaderMaxMarks = document.getElementById('cart-header-max-marks');
+const cartHeaderInstructions = document.getElementById('cart-header-instructions');
 const clearCartBtn = document.getElementById('clear-cart-btn');
 const exportDocxBtn = document.getElementById('export-docx-btn');
 const exportPdfBtn = document.getElementById('export-pdf-btn');
@@ -66,13 +100,19 @@ const styleDesc = document.getElementById('style-desc');
 
 const searchInput = document.getElementById('search-input');
 const clearSearchBtn = document.getElementById('clear-search-btn');
+const sortQuestionsSelect = document.getElementById('sort-questions');
+const filterNeedsReviewBtn = document.getElementById('filter-needs-review-btn');
+const needsReviewPillCount = document.getElementById('needs-review-pill-count');
 const activeFiltersBar = document.getElementById('active-filters-bar');
 const activeFilterPills = document.getElementById('active-filter-pills');
 const resetFiltersBtn = document.getElementById('reset-filters-btn');
 const densityComfortableBtn = document.getElementById('density-comfortable-btn');
 const densityCompactBtn = document.getElementById('density-compact-btn');
+const filterClass = document.getElementById('filter-class');
 const filterSubject = document.getElementById('filter-subject');
 const filterTopic = document.getElementById('filter-topic');
+const filterType = document.getElementById('filter-type');
+const filterDifficulty = document.getElementById('filter-difficulty');
 const filterSource = document.getElementById('filter-source');
 const questionsContainer = document.getElementById('questions-container');
 const paginationInfo = document.getElementById('pagination-info');
@@ -86,6 +126,9 @@ const bulkActionBar = document.getElementById('bulk-action-bar');
 const bulkSelectedCount = document.getElementById('bulk-selected-count');
 const selectAllPageCb = document.getElementById('select-all-page-cb');
 const bulkAddCartBtn = document.getElementById('bulk-add-cart-btn');
+const bulkTagBtn = document.getElementById('bulk-tag-btn');
+const bulkApproveBtn = document.getElementById('bulk-approve-btn');
+const bulkMergeBtn = document.getElementById('bulk-merge-btn');
 const bulkDocxBtn = document.getElementById('bulk-docx-btn');
 const bulkPdfBtn = document.getElementById('bulk-pdf-btn');
 const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
@@ -95,8 +138,14 @@ const clearSelectionBtn = document.getElementById('clear-selection-btn');
 const editModal = document.getElementById('edit-modal');
 const editIdInput = document.getElementById('edit-id');
 const editTextInput = document.getElementById('edit-text');
+const editClassInput = document.getElementById('edit-class');
 const editSubjectInput = document.getElementById('edit-subject');
 const editTopicInput = document.getElementById('edit-topic');
+const editTypeSelect = document.getElementById('edit-type');
+const editDifficultySelect = document.getElementById('edit-difficulty');
+const editMarksInput = document.getElementById('edit-marks');
+const editNeedsReviewCb = document.getElementById('edit-needs-review');
+const editReviewReasonSpan = document.getElementById('edit-review-reason');
 const cancelEditBtn = document.getElementById('cancel-edit-btn');
 const closeEditBtn = document.getElementById('close-edit-btn');
 const saveEditBtn = document.getElementById('save-edit-btn');
@@ -105,8 +154,12 @@ const saveEditBtn = document.getElementById('save-edit-btn');
 const openAddModalBtn = document.getElementById('open-add-modal-btn');
 const addModal = document.getElementById('add-modal');
 const addQText = document.getElementById('add-q-text');
+const addQClass = document.getElementById('add-q-class');
 const addQSubject = document.getElementById('add-q-subject');
 const addQTopic = document.getElementById('add-q-topic');
+const addQType = document.getElementById('add-q-type');
+const addQDifficulty = document.getElementById('add-q-difficulty');
+const addQMarks = document.getElementById('add-q-marks');
 const addQSource = document.getElementById('add-q-source');
 const addModalMsg = document.getElementById('add-modal-msg');
 const closeAddBtn = document.getElementById('close-add-btn');
@@ -205,7 +258,19 @@ async function handleInactivityLogout() {
 }
 
 function getPageCacheKey(page, limit, filters) {
-    return `${page}_${limit}_${filters.search || ''}_${filters.subject || ''}_${filters.topic || ''}_${filters.source || ''}`;
+    return [
+        page,
+        limit,
+        filters.search || '',
+        filters.class_level || '',
+        filters.subject || '',
+        filters.topic || '',
+        filters.question_type || '',
+        filters.difficulty || '',
+        filters.source || '',
+        filters.needs_review ? '1' : '0',
+        filters.sort_by || 'recent'
+    ].join('|');
 }
 
 function clearPageCache() {
@@ -485,6 +550,9 @@ async function handleAuthSubmit(e) {
 
         await loadMetadata();
         await loadQuestions();
+        if (typeof handleHashRoute === 'function' && window.location.hash.startsWith('#exams')) {
+            handleHashRoute();
+        }
     } catch (err) {
         clearSession();
         if (authErrorMsg) {
@@ -525,6 +593,12 @@ function applyRoleVisibility() {
             el.classList.add('hidden');
         }
     });
+    if (typeof updateBulkActionBar === 'function' && bulkActionBar) {
+        updateBulkActionBar();
+    }
+    if (state.currentQuestions && state.currentQuestions.length > 0 && typeof renderQuestions === 'function') {
+        reRenderCurrentQuestions();
+    }
 }
 
 function updateUserProfileUI() {
@@ -621,7 +695,7 @@ function setDensity(mode) {
     localStorage.setItem('qb_density', mode);
     updateDensityUI();
     if (state.currentQuestions && state.currentQuestions.length > 0) {
-        renderQuestions({ items: state.currentQuestions, total: statTotal ? statTotal.textContent : 0 });
+        reRenderCurrentQuestions();
     }
     showToast(`View density set to ${mode.charAt(0).toUpperCase() + mode.slice(1)}`, "info");
 }
@@ -676,7 +750,7 @@ async function loadUsersList() {
         userMgmtTableBody.innerHTML = users.map(u => {
             const isSelf = state.currentUser && state.currentUser.id === u.id;
             const isAdmin = u.role === 'admin';
-            const createdDate = u.created_at ? u.created_at.split('T')[0] : '-';
+            const createdDate = u.created_at ? String(u.created_at).split(/[T ]/)[0] : '-';
             return `
                 <tr class="hover:bg-slate-50 transition-colors">
                     <td class="p-3">
@@ -692,11 +766,11 @@ async function loadUsersList() {
                     </td>
                     <td class="p-3 text-slate-500">${createdDate}</td>
                     <td class="p-3 text-right space-x-1.5 whitespace-nowrap">
-                        <button onclick="handleResetUserPasswordPrompt(${u.id}, '${escapeHtml(u.username)}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer">
+                        <button type="button" data-user-action="reset-password" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer">
                             Reset Pass
                         </button>
                         ${!isSelf ? `
-                            <button onclick="handleDeleteUser(${u.id}, '${escapeHtml(u.username)}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer">
+                            <button type="button" data-user-action="delete" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer">
                                 Delete
                             </button>
                         ` : `
@@ -968,6 +1042,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadMetadata();
         loadQuestions();
         resetInactivityTimer();
+        if (typeof handleHashRoute === 'function') handleHashRoute();
     }
 });
 
@@ -1032,6 +1107,31 @@ function setupEventListeners() {
         }, 300);
     });
 
+    if (sortQuestionsSelect) {
+        sortQuestionsSelect.addEventListener('change', (e) => {
+            state.filters.sort_by = e.target.value || 'recent';
+            state.currentPage = 1;
+            loadQuestions();
+        });
+    }
+
+    const toggleNeedsReviewFilter = () => {
+        state.filters.needs_review = !state.filters.needs_review;
+        state.currentPage = 1;
+        triggerHaptic('light');
+        loadQuestions();
+    };
+    if (filterNeedsReviewBtn) filterNeedsReviewBtn.addEventListener('click', toggleNeedsReviewFilter);
+    if (statNeedsReviewCard) statNeedsReviewCard.addEventListener('click', toggleNeedsReviewFilter);
+
+    if (filterClass) {
+        filterClass.addEventListener('change', (e) => {
+            state.filters.class_level = e.target.value;
+            state.currentPage = 1;
+            loadQuestions();
+        });
+    }
+
     filterSubject.addEventListener('change', (e) => {
         state.filters.subject = e.target.value;
         state.currentPage = 1;
@@ -1043,6 +1143,22 @@ function setupEventListeners() {
         state.currentPage = 1;
         loadQuestions();
     });
+
+    if (filterType) {
+        filterType.addEventListener('change', (e) => {
+            state.filters.question_type = e.target.value;
+            state.currentPage = 1;
+            loadQuestions();
+        });
+    }
+
+    if (filterDifficulty) {
+        filterDifficulty.addEventListener('change', (e) => {
+            state.filters.difficulty = e.target.value;
+            state.currentPage = 1;
+            loadQuestions();
+        });
+    }
 
     filterSource.addEventListener('change', (e) => {
         state.filters.source = e.target.value;
@@ -1065,7 +1181,7 @@ function setupEventListeners() {
         }
     });
 
-    // Paper Title Draft Persistence
+    // Paper Title & School Paper Header Persistence
     if (paperTitleInput) {
         const savedTitle = localStorage.getItem('qb_paper_title');
         if (savedTitle) paperTitleInput.value = savedTitle;
@@ -1074,6 +1190,32 @@ function setupEventListeners() {
         });
     }
 
+    const savePaperHeaderState = () => {
+        if (cartShowHeaderCb) state.paperHeader.show_header = Boolean(cartShowHeaderCb.checked);
+        if (cartHeaderInstitute) state.paperHeader.institute_name = cartHeaderInstitute.value;
+        if (cartHeaderClassSubject) state.paperHeader.class_subject = cartHeaderClassSubject.value;
+        if (cartHeaderTime) state.paperHeader.time_allowed = cartHeaderTime.value;
+        if (cartHeaderMaxMarks) state.paperHeader.max_marks = cartHeaderMaxMarks.value;
+        if (cartHeaderInstructions) state.paperHeader.instructions = cartHeaderInstructions.value;
+        try {
+            localStorage.setItem('qb_paper_header', JSON.stringify(state.paperHeader));
+        } catch (err) {}
+    };
+
+    if (cartShowHeaderCb) cartShowHeaderCb.checked = state.paperHeader.show_header !== false;
+    if (cartHeaderInstitute) cartHeaderInstitute.value = state.paperHeader.institute_name || "The Squire's Way";
+    if (cartHeaderClassSubject) cartHeaderClassSubject.value = state.paperHeader.class_subject || '';
+    if (cartHeaderTime) cartHeaderTime.value = state.paperHeader.time_allowed || '3 Hours';
+    if (cartHeaderMaxMarks && state.paperHeader.max_marks) cartHeaderMaxMarks.value = state.paperHeader.max_marks;
+    if (cartHeaderInstructions) cartHeaderInstructions.value = state.paperHeader.instructions || '';
+
+    [cartShowHeaderCb, cartHeaderInstitute, cartHeaderClassSubject, cartHeaderTime, cartHeaderMaxMarks, cartHeaderInstructions].forEach(el => {
+        if (el) {
+            el.addEventListener('input', savePaperHeaderState);
+            el.addEventListener('change', savePaperHeaderState);
+        }
+    });
+
     // Cart Drawer Controls
     openCartBtn.addEventListener('click', openCart);
     closeCartBtn.addEventListener('click', closeCart);
@@ -1081,6 +1223,7 @@ function setupEventListeners() {
     clearCartBtn.addEventListener('click', clearCart);
     exportDocxBtn.addEventListener('click', () => exportFromCart('docx'));
     exportPdfBtn.addEventListener('click', () => exportFromCart('pdf'));
+    if (addCartSectionBtn) addCartSectionBtn.addEventListener('click', addCartSectionDivider);
 
     if (styleDefaultBtn && styleNormalBtn) {
         styleDefaultBtn.addEventListener('click', () => setTemplateMode(true));
@@ -1093,10 +1236,66 @@ function setupEventListeners() {
     // Bulk Actions Toolbar Events
     selectAllPageCb.addEventListener('change', (e) => toggleSelectAllPage(e.target.checked));
     bulkAddCartBtn.addEventListener('click', handleBulkAddToCart);
+    if (bulkTagBtn) bulkTagBtn.addEventListener('click', openBulkTagModal);
+    if (bulkApproveBtn) bulkApproveBtn.addEventListener('click', handleBulkApprove);
+    if (bulkMergeBtn) bulkMergeBtn.addEventListener('click', openMergeModalForSelection);
     bulkDocxBtn.addEventListener('click', () => handleBulkDownload('docx'));
     bulkPdfBtn.addEventListener('click', () => handleBulkDownload('pdf'));
     bulkDeleteBtn.addEventListener('click', handleBulkDelete);
     clearSelectionBtn.addEventListener('click', clearSelection);
+
+    // Library Action Buttons & New Productivity Modals
+    document.getElementById('open-auto-pick-btn')?.addEventListener('click', openAutoPickModal);
+    document.getElementById('open-find-dups-btn')?.addEventListener('click', openFindDuplicatesModal);
+    document.getElementById('open-curate-btn')?.addEventListener('click', openCurateModal);
+    document.getElementById('btn-open-curate-menu')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+        openCurateModal();
+    });
+
+    // Pre-Import Preview Modal Listeners
+    document.getElementById('close-import-preview-modal')?.addEventListener('click', closeImportPreviewModal);
+    document.getElementById('cancel-import-preview-btn')?.addEventListener('click', closeImportPreviewModal);
+    document.getElementById('confirm-import-preview-btn')?.addEventListener('click', handleConfirmImport);
+    document.getElementById('import-preview-select-all')?.addEventListener('change', (e) => toggleImportPreviewSelectAll(e.target.checked));
+    document.getElementById('btn-apply-import-batch')?.addEventListener('click', applyBatchTagsToPreview);
+
+    // Bulk Tag Modal Listeners
+    document.getElementById('close-bulk-tag-modal')?.addEventListener('click', closeBulkTagModal);
+    document.getElementById('cancel-bulk-tag-btn')?.addEventListener('click', closeBulkTagModal);
+    document.getElementById('save-bulk-tag-btn')?.addEventListener('click', handleSaveBulkTag);
+
+    // Merge Duplicates Modal Listeners
+    document.getElementById('close-merge-dups-modal')?.addEventListener('click', closeMergeDupsModal);
+    document.getElementById('close-merge-dups-footer')?.addEventListener('click', closeMergeDupsModal);
+
+    // Auto-Pick Modal Listeners
+    document.getElementById('close-auto-pick-modal')?.addEventListener('click', closeAutoPickModal);
+    document.getElementById('cancel-auto-pick-btn')?.addEventListener('click', closeAutoPickModal);
+    document.getElementById('auto-pick-form')?.addEventListener('submit', handleAutoPickSubmit);
+
+    // Admin Smart Curation Modal Listeners
+    document.getElementById('close-curate-modal')?.addEventListener('click', closeCurateModal);
+    document.getElementById('cancel-curate-btn')?.addEventListener('click', closeCurateModal);
+    document.getElementById('btn-curate-preview')?.addEventListener('click', runCuratePreview);
+    document.getElementById('btn-curate-apply')?.addEventListener('click', runCurateApply);
+
+    // Extend Deadline Modal Listeners
+    document.getElementById('close-extend-deadline-modal')?.addEventListener('click', closeExtendDeadlineModal);
+    document.getElementById('cancel-extend-deadline-btn')?.addEventListener('click', closeExtendDeadlineModal);
+    document.getElementById('extend-deadline-form')?.addEventListener('submit', handleExtendDeadlineSubmit);
+    document.querySelectorAll('.quick-extend-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const hrs = parseInt(btn.getAttribute('data-add-hours') || '0', 10);
+            const inp = document.getElementById('extend-deadline-input');
+            if (!inp || !hrs) return;
+            const base = inp.value ? new Date(inp.value) : new Date();
+            const safeBase = (isNaN(base.getTime()) || base < new Date()) ? new Date() : base;
+            safeBase.setHours(safeBase.getHours() + hrs);
+            inp.value = toLocalDatetimeInputValue(safeBase);
+        });
+    });
 
     // Edit Modal Events
     cancelEditBtn.addEventListener('click', closeEditModal);
@@ -1173,9 +1372,24 @@ function setupEventListeners() {
         });
     }
 
-    // User Management Form submit
+    // User Management Form & Delegated Table Actions
     if (createUserForm) createUserForm.addEventListener('submit', handleCreateUserSubmit);
     if (changePwdForm) changePwdForm.addEventListener('submit', handleChangePasswordSubmit);
+    if (userMgmtTableBody) {
+        userMgmtTableBody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-user-action]');
+            if (!btn) return;
+            const action = btn.dataset.userAction;
+            const userId = parseInt(btn.dataset.userId || '0', 10);
+            const username = btn.dataset.username || '';
+            if (!userId) return;
+            if (action === 'reset-password') {
+                window.handleResetUserPasswordPrompt(userId, username);
+            } else if (action === 'delete') {
+                window.handleDeleteUser(userId, username);
+            }
+        });
+    }
 
     // Modal Close Buttons
     if (closeUserMgmtBtn) closeUserMgmtBtn.addEventListener('click', closeUserMgmtModal);
@@ -1184,6 +1398,12 @@ function setupEventListeners() {
 
     // Universal Outside-Backdrop Click Dismissal for all Modals
     const modalBackdropConfigs = [
+        { id: 'import-preview-modal', close: closeImportPreviewModal },
+        { id: 'bulk-tag-modal', close: closeBulkTagModal },
+        { id: 'merge-duplicates-modal', close: closeMergeDupsModal },
+        { id: 'auto-pick-modal', close: closeAutoPickModal },
+        { id: 'curate-modal', close: closeCurateModal },
+        { id: 'extend-deadline-modal', close: closeExtendDeadlineModal },
         { id: 'edit-modal', close: closeEditModal },
         { id: 'add-modal', close: closeAddModal },
         { id: 'user-mgmt-modal', close: closeUserMgmtModal },
@@ -1210,6 +1430,36 @@ function setupEventListeners() {
             const photoZoom = document.getElementById('photo-zoom-modal');
             if (photoZoom && !photoZoom.classList.contains('hidden')) {
                 photoZoom.classList.add('hidden');
+                return;
+            }
+            const extendDeadlineModal = document.getElementById('extend-deadline-modal');
+            if (extendDeadlineModal && !extendDeadlineModal.classList.contains('hidden')) {
+                closeExtendDeadlineModal();
+                return;
+            }
+            const curateModal = document.getElementById('curate-modal');
+            if (curateModal && !curateModal.classList.contains('hidden')) {
+                closeCurateModal();
+                return;
+            }
+            const autoPickModal = document.getElementById('auto-pick-modal');
+            if (autoPickModal && !autoPickModal.classList.contains('hidden')) {
+                closeAutoPickModal();
+                return;
+            }
+            const mergeDupsModal = document.getElementById('merge-duplicates-modal');
+            if (mergeDupsModal && !mergeDupsModal.classList.contains('hidden')) {
+                closeMergeDupsModal();
+                return;
+            }
+            const bulkTagModal = document.getElementById('bulk-tag-modal');
+            if (bulkTagModal && !bulkTagModal.classList.contains('hidden')) {
+                closeBulkTagModal();
+                return;
+            }
+            const importPreviewModal = document.getElementById('import-preview-modal');
+            if (importPreviewModal && !importPreviewModal.classList.contains('hidden')) {
+                closeImportPreviewModal();
                 return;
             }
             const examQr = document.getElementById('exam-qr-modal');
@@ -1284,24 +1534,6 @@ function setupEventListeners() {
     if (densityComfortableBtn) densityComfortableBtn.addEventListener('click', () => setDensity('comfortable'));
     if (densityCompactBtn) densityCompactBtn.addEventListener('click', () => setDensity('compact'));
 
-    const updateFiltersBadge = () => {
-        let count = 0;
-        if (filterSubject && filterSubject.value) count++;
-        if (filterTopic && filterTopic.value) count++;
-        if (filterSource && filterSource.value) count++;
-        if (activeFiltersBadge) {
-            if (count > 0) {
-                activeFiltersBadge.textContent = count;
-                activeFiltersBadge.classList.remove('hidden');
-            } else {
-                activeFiltersBadge.classList.add('hidden');
-            }
-        }
-    };
-    filterSubject.addEventListener('change', updateFiltersBadge);
-    filterTopic.addEventListener('change', updateFiltersBadge);
-    filterSource.addEventListener('change', updateFiltersBadge);
-
     // Auth Form Event
     if (authForm) authForm.addEventListener('submit', handleAuthSubmit);
 }
@@ -1327,7 +1559,7 @@ function renderSelectedFiles() {
     if (state.selectedFiles.length === 0) {
         selectedFilesList.classList.add('hidden');
         uploadBtn.disabled = true;
-        uploadBtn.className = "inline-flex items-center space-x-2 bg-slate-200 text-slate-400 px-5 py-2.5 rounded-xl text-sm font-semibold cursor-not-allowed transition-all";
+        uploadBtn.className = "inline-flex items-center space-x-2 bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 px-5 py-2.5 rounded-xl text-sm font-semibold cursor-not-allowed transition-all";
         return;
     }
 
@@ -1336,7 +1568,7 @@ function renderSelectedFiles() {
     uploadBtn.className = "inline-flex items-center space-x-2 bg-brand-600 hover:bg-brand-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold cursor-pointer shadow-md shadow-brand-500/20 active:scale-95 transition-all";
 
     filesContainer.innerHTML = state.selectedFiles.map((file, idx) => `
-        <span class="inline-flex items-center space-x-1.5 text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-slate-700 shadow-sm">
+        <span class="inline-flex items-center space-x-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg text-slate-700 dark:text-slate-200 shadow-sm">
             <span>📄 ${escapeHtml(file.name)}</span>
             <button type="button" onclick="removeSelectedFile(${idx})" class="text-slate-400 hover:text-rose-500 ml-1 font-bold">✕</button>
         </span>
@@ -1348,7 +1580,7 @@ window.removeSelectedFile = function(index) {
     renderSelectedFiles();
 };
 
-// Upload Submission
+// Upload Submission -> Smart Sanitizer & Pre-Import Preview Modal
 async function handleUploadSubmit(e) {
     e.preventDefault();
     if (state.selectedFiles.length === 0) return;
@@ -1359,74 +1591,233 @@ async function handleUploadSubmit(e) {
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        <span>Extracting Questions...</span>
+        <span>Extracting & Sanitizing...</span>
     `;
 
     const formData = new FormData();
     state.selectedFiles.forEach(f => formData.append('files', f));
+    if (uploadClassInput) formData.append('class_level', uploadClassInput.value.trim());
     formData.append('subject', uploadSubjectInput.value.trim());
     formData.append('topic', uploadTopicInput.value.trim());
 
     try {
-        const response = await apiFetch('/api/upload', {
+        const response = await apiFetch('/api/upload/preview', {
             method: 'POST',
             body: formData
         });
 
         if (!response.ok) {
             const err = await response.json();
-            throw new Error(err.detail || 'Upload failed');
+            throw new Error(err.detail || 'Preview extraction failed');
         }
 
         const data = await response.json();
 
-        // Show result banner with clear feedback
-        if (data.total_extracted === 0) {
-            uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-amber-50 border-amber-200 text-amber-800 text-sm space-y-1 block";
-            uploadResultBanner.innerHTML = `
-                <div class="flex items-center space-x-2 font-bold text-amber-900">
-                    <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    <span>0 Questions Extracted</span>
-                </div>
-                <p class="text-xs text-amber-700">
-                    We could not find questions in the uploaded document. Please check that your questions are written on separate lines or prefixed with numbers (e.g. 1., 2., Q1.).
-                </p>
-            `;
-        } else {
-            uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-emerald-50 border-emerald-200 text-emerald-800 text-sm space-y-1 block";
+        if (!data.items || data.items.length === 0) {
+            uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm space-y-1 block";
             uploadResultBanner.innerHTML = `
                 <div class="flex items-center space-x-2 font-bold">
-                    <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Extraction Complete!</span>
+                    <span>⚠️ 0 Questions Extracted</span>
                 </div>
-                <p class="text-xs text-emerald-700">
-                    Extracted <strong>${data.total_extracted}</strong> questions total from ${data.total_files} file(s).
-                    <strong>${data.total_new}</strong> added as new, and <strong>${data.total_merged}</strong> identical duplicates merged into existing entries.
+                <p class="text-xs">
+                    No valid questions were found after dropping pure headers/dividers (${data.dropped_dividers_count || 0} divider rows filtered). Please ensure questions are on separate lines or numbered.
                 </p>
             `;
+            return;
         }
 
-        // Clear files
+        openImportPreviewModal(data);
+
+    } catch (error) {
+        uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-sm space-y-1 block";
+        uploadResultBanner.innerHTML = `<strong>Error:</strong> ${escapeHtml(error.message)}`;
+    } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.innerHTML = `<span>Extract & Preview Questions</span>`;
+    }
+}
+
+function openImportPreviewModal(previewData) {
+    state.previewItems = (previewData.items || []).map(item => ({ ...item }));
+    const summaryEl = document.getElementById('import-preview-summary');
+    if (summaryEl) {
+        summaryEl.textContent = `Extracted ${previewData.total_extracted} clean questions from ${previewData.total_files} file(s) • ${previewData.new_count} New • ${previewData.duplicate_count} Duplicates • ${previewData.needs_review_count} Flagged • ${previewData.dropped_dividers_count || 0} Dividers dropped`;
+    }
+    const selAllCb = document.getElementById('import-preview-select-all');
+    if (selAllCb) selAllCb.checked = true;
+    const bClass = document.getElementById('import-batch-class');
+    const bSubj = document.getElementById('import-batch-subject');
+    const bTopic = document.getElementById('import-batch-topic');
+    if (bClass) bClass.value = uploadClassInput?.value.trim() || '';
+    if (bSubj) bSubj.value = uploadSubjectInput?.value.trim() || '';
+    if (bTopic) bTopic.value = uploadTopicInput?.value.trim() || '';
+
+    renderImportPreviewList();
+    document.getElementById('import-preview-modal')?.classList.remove('hidden');
+}
+
+function closeImportPreviewModal() {
+    document.getElementById('import-preview-modal')?.classList.add('hidden');
+}
+
+function updatePreviewIncludedCount() {
+    const count = state.previewItems.filter(it => it.include).length;
+    const el = document.getElementById('import-preview-included-count');
+    if (el) el.textContent = `${count} of ${state.previewItems.length} selected for import`;
+}
+
+function renderImportPreviewList() {
+    const container = document.getElementById('import-preview-list');
+    if (!container) return;
+
+    container.innerHTML = state.previewItems.map((it, idx) => `
+        <div class="bg-white dark:bg-slate-800 rounded-xl border ${it.include ? (it.needs_review ? 'border-amber-300 dark:border-amber-700' : 'border-slate-200 dark:border-slate-700') : 'border-slate-200/50 dark:border-slate-800 opacity-55'} p-3.5 space-y-2.5 shadow-2xs">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center flex-wrap gap-2">
+                    <label class="inline-flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" data-preview-idx="${idx}" class="preview-include-cb w-4 h-4 rounded text-brand-600 focus:ring-brand-500" ${it.include ? 'checked' : ''}>
+                        <span class="text-xs font-bold text-slate-600 dark:text-slate-300">#${idx + 1}</span>
+                    </label>
+                    <span class="text-[11px] px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-medium">📄 ${escapeHtml(it.source_filename)}</span>
+                    ${it.is_duplicate ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">🔁 Duplicate (Freq ${it.existing_frequency}x → merges)</span>` : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">✨ New</span>`}
+                    ${it.needs_review ? `<button type="button" data-preview-idx="${idx}" class="preview-clear-review-btn text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 hover:bg-emerald-100 hover:text-emerald-800 cursor-pointer" title="${escapeHtml(it.review_reason || '')} — Click to mark reviewed">⚠️ ${escapeHtml(it.review_reason || 'Needs Review')} ✕</button>` : ''}
+                </div>
+            </div>
+            <textarea rows="2" data-preview-idx="${idx}" class="preview-text-input w-full text-xs p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">${escapeHtml(it.question_text)}</textarea>
+            <div class="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                <input type="text" data-preview-idx="${idx}" data-field="class_level" list="class-level-options" placeholder="Class" value="${escapeHtml(it.class_level || '')}" class="preview-meta-input text-[11px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                <input type="text" data-preview-idx="${idx}" data-field="subject" placeholder="Subject" value="${escapeHtml(it.subject || '')}" class="preview-meta-input text-[11px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                <input type="text" data-preview-idx="${idx}" data-field="topic" placeholder="Chapter / Topic" value="${escapeHtml(it.topic || '')}" class="preview-meta-input text-[11px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                <select data-preview-idx="${idx}" data-field="question_type" class="preview-meta-input text-[11px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                    ${['', 'Short Answer', 'Long Answer', 'MCQ', 'Extract / Reference', 'Writing / Composition', 'Grammar'].map(t => `<option value="${t}"${(it.question_type || '') === t ? ' selected' : ''}>${t || 'Type'}</option>`).join('')}
+                </select>
+                <select data-preview-idx="${idx}" data-field="difficulty" class="preview-meta-input text-[11px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                    ${['', 'Easy', 'Medium', 'Hard'].map(d => `<option value="${d}"${(it.difficulty || '') === d ? ' selected' : ''}>${d || 'Difficulty'}</option>`).join('')}
+                </select>
+                <input type="number" step="0.5" min="0.5" data-preview-idx="${idx}" data-field="default_marks" placeholder="Marks" value="${it.default_marks != null ? it.default_marks : ''}" class="preview-meta-input text-[11px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+            </div>
+        </div>
+    `).join('');
+
+    container.querySelectorAll('.preview-include-cb').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-preview-idx'), 10);
+            if (state.previewItems[idx]) state.previewItems[idx].include = Boolean(e.target.checked);
+            updatePreviewIncludedCount();
+        });
+    });
+
+    container.querySelectorAll('.preview-text-input').forEach(ta => {
+        ta.addEventListener('input', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-preview-idx'), 10);
+            if (state.previewItems[idx]) state.previewItems[idx].question_text = e.target.value;
+        });
+    });
+
+    container.querySelectorAll('.preview-meta-input').forEach(inp => {
+        const handler = (e) => {
+            const idx = parseInt(e.target.getAttribute('data-preview-idx'), 10);
+            const field = e.target.getAttribute('data-field');
+            if (!state.previewItems[idx] || !field) return;
+            if (field === 'default_marks') {
+                const v = parseFloat(e.target.value);
+                state.previewItems[idx].default_marks = isNaN(v) ? null : v;
+            } else {
+                state.previewItems[idx][field] = e.target.value.trim();
+            }
+        };
+        inp.addEventListener('input', handler);
+        inp.addEventListener('change', handler);
+    });
+
+    container.querySelectorAll('.preview-clear-review-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-preview-idx'), 10);
+            if (state.previewItems[idx]) {
+                state.previewItems[idx].needs_review = false;
+                state.previewItems[idx].review_reason = '';
+                renderImportPreviewList();
+            }
+        });
+    });
+
+    updatePreviewIncludedCount();
+}
+
+function toggleImportPreviewSelectAll(checked) {
+    state.previewItems.forEach(it => { it.include = Boolean(checked); });
+    renderImportPreviewList();
+}
+
+function applyBatchTagsToPreview() {
+    const cls = document.getElementById('import-batch-class')?.value.trim() || '';
+    const subj = document.getElementById('import-batch-subject')?.value.trim() || '';
+    const top = document.getElementById('import-batch-topic')?.value.trim() || '';
+    state.previewItems.forEach(it => {
+        if (!it.include) return;
+        if (cls) it.class_level = cls;
+        if (subj) it.subject = subj;
+        if (top) it.topic = top;
+    });
+    renderImportPreviewList();
+    showToast("Applied tags to included preview rows.", "info", 2000);
+}
+
+async function handleConfirmImport() {
+    const confirmBtn = document.getElementById('confirm-import-preview-btn');
+    const included = state.previewItems.filter(it => it.include && (it.question_text || '').trim());
+    if (included.length === 0) {
+        showToast("Select at least 1 question to import.", "warning");
+        return;
+    }
+
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Saving to Library...';
+    }
+
+    try {
+        const res = await apiFetch('/api/upload/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: included })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Import confirmation failed');
+        }
+        const data = await res.json();
+        closeImportPreviewModal();
+
+        uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-sm space-y-1 block";
+        uploadResultBanner.innerHTML = `
+            <div class="flex items-center space-x-2 font-bold">
+                <span>✓ Import Confirmed!</span>
+            </div>
+            <p class="text-xs">
+                Saved <strong>${data.total_extracted}</strong> questions from ${data.total_files} file(s):
+                <strong>${data.total_new}</strong> added as new, <strong>${data.total_merged}</strong> merged with existing duplicates.
+            </p>
+        `;
+
         state.selectedFiles = [];
+        if (uploadClassInput) uploadClassInput.value = '';
         uploadSubjectInput.value = '';
         uploadTopicInput.value = '';
         renderSelectedFiles();
 
-        // Invalidate page cache and refresh library and metadata
         clearPageCache();
         await loadMetadata();
         await loadQuestions(true);
-
-    } catch (error) {
-        uploadResultBanner.className = "mt-4 p-4 rounded-xl border bg-rose-50 border-rose-200 text-rose-800 text-sm space-y-1 block";
-        uploadResultBanner.innerHTML = `<strong>Error:</strong> ${escapeHtml(error.message)}`;
+        triggerHaptic('success');
+        showToast(`Imported ${data.total_extracted} questions successfully!`, "success");
+    } catch (err) {
+        showToast("Error importing questions: " + err.message, "error");
     } finally {
-        uploadBtn.disabled = false;
-        uploadBtn.innerHTML = `<span>Extract & Add to Library</span>`;
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '1-Click Confirm Import ✓';
+        }
     }
 }
 
@@ -1439,21 +1830,74 @@ async function loadMetadata() {
 
         if (statTotal) statTotal.textContent = data.total_unique || 0;
         if (statMerged) statMerged.textContent = data.merged_duplicates || 0;
+        if (statNeedsReview) statNeedsReview.textContent = data.needs_review_count || 0;
+        if (needsReviewPillCount) needsReviewPillCount.textContent = data.needs_review_count || 0;
 
-        // Populate Subjects
+        // Populate Class Levels (Filter + Auto-Pick)
+        if (filterClass) {
+            const curCls = filterClass.value;
+            filterClass.innerHTML = '<option value="">All Classes</option>' +
+                (data.class_levels || []).map(c => `<option value="${escapeHtml(c)}"${c === curCls ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('');
+        }
+        const autoClass = document.getElementById('auto-pick-class');
+        if (autoClass) {
+            const cur = autoClass.value;
+            autoClass.innerHTML = '<option value="">Any Class</option>' +
+                (data.class_levels || []).map(c => `<option value="${escapeHtml(c)}"${c === cur ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('');
+        }
+
+        // Populate Subjects (Filter + Auto-Pick)
         const currentSub = filterSubject.value;
         filterSubject.innerHTML = '<option value="">All Subjects</option>' +
-            data.subjects.map(s => `<option value="${escapeHtml(s)}"${s === currentSub ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('');
+            (data.subjects || []).map(s => `<option value="${escapeHtml(s)}"${s === currentSub ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('');
+        const autoSub = document.getElementById('auto-pick-subject');
+        if (autoSub) {
+            const cur = autoSub.value;
+            autoSub.innerHTML = '<option value="">Any Subject</option>' +
+                (data.subjects || []).map(s => `<option value="${escapeHtml(s)}"${s === cur ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('');
+        }
 
-        // Populate Topics
+        // Populate Topics (Filter + Auto-Pick)
         const currentTopic = filterTopic.value;
-        filterTopic.innerHTML = '<option value="">All Topics</option>' +
-            data.topics.map(t => `<option value="${escapeHtml(t)}"${t === currentTopic ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+        filterTopic.innerHTML = '<option value="">All Chapters</option>' +
+            (data.topics || []).map(t => `<option value="${escapeHtml(t)}"${t === currentTopic ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+        const autoTopic = document.getElementById('auto-pick-topic');
+        if (autoTopic) {
+            const cur = autoTopic.value;
+            autoTopic.innerHTML = '<option value="">Any Chapter (Spread across chapters)</option>' +
+                (data.topics || []).map(t => `<option value="${escapeHtml(t)}"${t === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+        }
+
+        // Populate Question Types (Filter + Auto-Pick)
+        if (filterType) {
+            const curType = filterType.value;
+            filterType.innerHTML = '<option value="">All Types</option>' +
+                (data.question_types || []).map(t => `<option value="${escapeHtml(t)}"${t === curType ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+        }
+        const autoType = document.getElementById('auto-pick-type');
+        if (autoType) {
+            const cur = autoType.value;
+            autoType.innerHTML = '<option value="">Any Type</option>' +
+                (data.question_types || []).map(t => `<option value="${escapeHtml(t)}"${t === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+        }
+
+        // Populate Difficulties (Filter + Auto-Pick)
+        if (filterDifficulty) {
+            const curDiff = filterDifficulty.value;
+            filterDifficulty.innerHTML = '<option value="">All Difficulties</option>' +
+                (data.difficulties || []).map(d => `<option value="${escapeHtml(d)}"${d === curDiff ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('');
+        }
+        const autoDiff = document.getElementById('auto-pick-difficulty');
+        if (autoDiff) {
+            const cur = autoDiff.value;
+            autoDiff.innerHTML = '<option value="">Any Difficulty</option>' +
+                (data.difficulties || []).map(d => `<option value="${escapeHtml(d)}"${d === cur ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('');
+        }
 
         // Populate Sources
         const currentSrc = filterSource.value;
         filterSource.innerHTML = '<option value="">All Source Files</option>' +
-            data.sources.map(src => `<option value="${escapeHtml(src)}"${src === currentSrc ? ' selected' : ''}>${escapeHtml(src)}</option>`).join('');
+            (data.sources || []).map(src => `<option value="${escapeHtml(src)}"${src === currentSrc ? ' selected' : ''}>${escapeHtml(src)}</option>`).join('');
 
     } catch (err) {
         console.error("Error loading metadata:", err);
@@ -1463,7 +1907,7 @@ async function loadMetadata() {
 function renderSkeletonCards(count = 4) {
     if (!questionsContainer) return;
     questionsContainer.innerHTML = Array.from({ length: count }).map(() => `
-        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+        <div class="bg-white dark:bg-slate-800 p-4 sm:p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs space-y-3">
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                     <div class="w-4 h-4 rounded skeleton-shimmer"></div>
@@ -1493,65 +1937,82 @@ function updateActiveFiltersBar() {
     activeFilterPills.innerHTML = '';
     let count = 0;
 
-    if (state.filters.search) {
+    const addPill = (label, onRemove, cls = "bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700") => {
         count++;
         const pill = document.createElement('span');
-        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800/60 text-xs font-semibold shadow-2xs";
-        pill.innerHTML = `<span>🔍 "${escapeHtml(state.filters.search)}"</span><button type="button" class="hover:text-brand-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Clear search">✕</button>`;
+        pill.className = `inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg border text-xs font-semibold shadow-2xs ${cls}`;
+        pill.innerHTML = `<span>${label}</span><button type="button" class="hover:opacity-75 ml-1 font-bold cursor-pointer">✕</button>`;
         pill.querySelector('button').addEventListener('click', () => {
+            onRemove();
+            state.currentPage = 1;
+            triggerHaptic('light');
+            loadQuestions();
+        });
+        activeFilterPills.appendChild(pill);
+    };
+
+    if (state.filters.search) {
+        addPill(`🔍 "${escapeHtml(state.filters.search)}"`, () => {
             searchInput.value = '';
             if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
             state.filters.search = '';
-            state.currentPage = 1;
-            triggerHaptic('light');
-            loadQuestions();
+        }, "bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border-brand-200/60 dark:border-brand-800/60");
+    }
+
+    if (state.filters.class_level) {
+        addPill(`🎓 ${escapeHtml(state.filters.class_level)}`, () => {
+            if (filterClass) filterClass.value = '';
+            state.filters.class_level = '';
         });
-        activeFilterPills.appendChild(pill);
     }
 
     if (state.filters.subject) {
-        count++;
-        const pill = document.createElement('span');
-        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shadow-2xs";
-        pill.innerHTML = `<span>📚 ${escapeHtml(state.filters.subject)}</span><button type="button" class="hover:text-slate-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Remove subject filter">✕</button>`;
-        pill.querySelector('button').addEventListener('click', () => {
+        addPill(`📚 ${escapeHtml(state.filters.subject)}`, () => {
             filterSubject.value = '';
             state.filters.subject = '';
-            state.currentPage = 1;
-            triggerHaptic('light');
-            loadQuestions();
         });
-        activeFilterPills.appendChild(pill);
     }
 
     if (state.filters.topic) {
-        count++;
-        const pill = document.createElement('span');
-        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shadow-2xs";
-        pill.innerHTML = `<span>🏷️ ${escapeHtml(state.filters.topic)}</span><button type="button" class="hover:text-slate-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Remove topic filter">✕</button>`;
-        pill.querySelector('button').addEventListener('click', () => {
+        addPill(`🏷️ ${escapeHtml(state.filters.topic)}`, () => {
             filterTopic.value = '';
             state.filters.topic = '';
-            state.currentPage = 1;
-            triggerHaptic('light');
-            loadQuestions();
         });
-        activeFilterPills.appendChild(pill);
+    }
+
+    if (state.filters.question_type) {
+        addPill(`📝 ${escapeHtml(state.filters.question_type)}`, () => {
+            if (filterType) filterType.value = '';
+            state.filters.question_type = '';
+        });
+    }
+
+    if (state.filters.difficulty) {
+        addPill(`🎯 ${escapeHtml(state.filters.difficulty)}`, () => {
+            if (filterDifficulty) filterDifficulty.value = '';
+            state.filters.difficulty = '';
+        });
     }
 
     if (state.filters.source) {
-        count++;
-        const pill = document.createElement('span');
-        pill.className = "inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shadow-2xs";
-        pill.innerHTML = `<span>📄 ${escapeHtml(state.filters.source)}</span><button type="button" class="hover:text-slate-900 dark:hover:text-white ml-1 font-bold cursor-pointer" title="Remove source filter">✕</button>`;
-        pill.querySelector('button').addEventListener('click', () => {
+        addPill(`📄 ${escapeHtml(state.filters.source)}`, () => {
             filterSource.value = '';
             state.filters.source = '';
-            state.currentPage = 1;
-            triggerHaptic('light');
-            loadQuestions();
         });
-        activeFilterPills.appendChild(pill);
+    }
+
+    if (state.filters.needs_review) {
+        addPill(`⚠️ Needs Review Only`, () => {
+            state.filters.needs_review = false;
+        }, "bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700");
+    }
+
+    if (filterNeedsReviewBtn) {
+        if (state.filters.needs_review) {
+            filterNeedsReviewBtn.className = "shrink-0 inline-flex items-center space-x-1.5 px-3 py-2.5 rounded-xl border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/50 text-xs font-bold text-amber-800 dark:text-amber-200 cursor-pointer transition-colors";
+        } else {
+            filterNeedsReviewBtn.className = "shrink-0 inline-flex items-center space-x-1.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 hover:border-amber-400 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors";
+        }
     }
 
     if (activeFiltersBadge) {
@@ -1569,13 +2030,22 @@ function updateActiveFiltersBar() {
 function resetAllFilters() {
     searchInput.value = '';
     if (clearSearchBtn) clearSearchBtn.classList.add('hidden');
+    if (filterClass) filterClass.value = '';
     filterSubject.value = '';
     filterTopic.value = '';
+    if (filterType) filterType.value = '';
+    if (filterDifficulty) filterDifficulty.value = '';
     filterSource.value = '';
+    if (sortQuestionsSelect) sortQuestionsSelect.value = 'recent';
     state.filters.search = '';
+    state.filters.class_level = '';
     state.filters.subject = '';
     state.filters.topic = '';
+    state.filters.question_type = '';
+    state.filters.difficulty = '';
     state.filters.source = '';
+    state.filters.needs_review = false;
+    state.filters.sort_by = 'recent';
     state.currentPage = 1;
     triggerHaptic('light');
     loadQuestions();
@@ -1589,6 +2059,7 @@ async function loadQuestions(skipCache = false) {
     if (!skipCache && state.pageCache.has(cacheKey)) {
         const cached = state.pageCache.get(cacheKey);
         state.currentQuestions = cached.items;
+        state.totalQuestions = cached.total;
         state.totalPages = Math.max(1, Math.ceil(cached.total / state.limit));
         renderQuestions(cached);
         return;
@@ -1598,13 +2069,18 @@ async function loadQuestions(skipCache = false) {
 
     const params = new URLSearchParams({
         page: state.currentPage,
-        limit: state.limit
+        limit: state.limit,
+        sort_by: state.filters.sort_by || 'recent'
     });
 
     if (state.filters.search) params.append('search', state.filters.search);
+    if (state.filters.class_level) params.append('class_level', state.filters.class_level);
     if (state.filters.subject) params.append('subject', state.filters.subject);
     if (state.filters.topic) params.append('topic', state.filters.topic);
+    if (state.filters.question_type) params.append('question_type', state.filters.question_type);
+    if (state.filters.difficulty) params.append('difficulty', state.filters.difficulty);
     if (state.filters.source) params.append('source', state.filters.source);
+    if (state.filters.needs_review) params.append('needs_review', 'true');
 
     try {
         const res = await apiFetch(`/api/questions?${params.toString()}`);
@@ -1619,6 +2095,7 @@ async function loadQuestions(skipCache = false) {
         state.pageCache.set(cacheKey, data);
 
         state.currentQuestions = data.items;
+        state.totalQuestions = data.total;
         state.totalPages = Math.max(1, Math.ceil(data.total / state.limit));
 
         renderQuestions(data);
@@ -1629,6 +2106,15 @@ async function loadQuestions(skipCache = false) {
             </div>
         `;
     }
+}
+
+function reRenderCurrentQuestions() {
+    if (!questionsContainer || !Array.isArray(state.currentQuestions)) return;
+    const fallbackTotal = parseInt(statTotal?.textContent || '0', 10) || state.currentQuestions.length;
+    const total = (state.totalQuestions != null && state.totalQuestions > 0)
+        ? state.totalQuestions
+        : (state.currentQuestions.length === 0 ? 0 : fallbackTotal);
+    renderQuestions({ items: state.currentQuestions, total });
 }
 
 // Render Question Cards
@@ -1668,18 +2154,27 @@ function renderQuestions(data) {
         const freq = q.frequency || 1;
         const isRepeated = freq > 1;
         const isSelected = state.selectedIds.has(q.id);
+        const diffColors = {
+            Easy: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200/70 dark:border-emerald-800/60',
+            Medium: 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200/70 dark:border-blue-800/60',
+            Hard: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200/70 dark:border-rose-800/60'
+        };
+        const diffCls = diffColors[q.difficulty] || 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200/70 dark:border-slate-700';
 
         if (isCompact) {
-            // Compact Dense Row Layout
             return `
-                <div data-id="${q.id}" class="question-card compact-view bg-white dark:bg-slate-800 p-3 sm:py-2.5 sm:px-4 rounded-xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 ring-1 ring-brand-500' : 'border-slate-200/80 dark:border-slate-700/80'} shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all">
+                <div data-id="${q.id}" class="question-card compact-view bg-white dark:bg-slate-800 p-3 sm:py-2.5 sm:px-4 rounded-xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 ring-1 ring-brand-500' : (q.needs_review ? 'border-amber-300/80 dark:border-amber-700/70' : 'border-slate-200/80 dark:border-slate-700/80')} shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all">
                     <div class="flex items-center space-x-3 flex-1 min-w-0">
                         <input type="checkbox" onchange="toggleSelectQuestion(${q.id}, this.checked)" ${isSelected ? 'checked' : ''} class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 cursor-pointer shrink-0" title="Select question">
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center gap-1.5 flex-wrap mb-0.5">
                                 ${isRepeated ? `<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.2 rounded-full high-frequency-badge">🔥 ${freq}x</span>` : ''}
+                                ${q.class_level ? `<span class="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.2 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300">🎓 ${escapeHtml(q.class_level)}</span>` : ''}
                                 ${q.subject ? `<span class="inline-flex items-center text-[10px] font-semibold px-2 py-0.2 rounded-full bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/60">📚 ${escapeHtml(q.subject)}</span>` : ''}
                                 ${q.topic ? `<span class="inline-flex items-center text-[10px] font-medium px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300">🏷️ ${escapeHtml(q.topic)}</span>` : ''}
+                                ${q.question_type ? `<span class="inline-flex items-center text-[10px] font-medium px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-200">${escapeHtml(q.question_type)}</span>` : ''}
+                                ${q.default_marks != null ? `<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-200/70 dark:bg-slate-700 text-slate-800 dark:text-slate-100 tabular-nums">[${q.default_marks}m]</span>` : ''}
+                                ${q.needs_review ? `<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300" title="${escapeHtml(q.review_reason || 'Needs Review')}">⚠️ Review</span>` : ''}
                             </div>
                             <p onclick="this.closest('.question-card').classList.toggle('expanded')" class="question-body text-xs font-medium text-slate-900 dark:text-slate-100 cursor-pointer hover:text-brand-600 dark:hover:text-brand-400" title="Click to expand/collapse full question">
                                 ${escapeHtml(q.question_text)}
@@ -1689,6 +2184,7 @@ function renderQuestions(data) {
 
                     <!-- Compact Action Buttons -->
                     <div class="flex items-center space-x-1 shrink-0 justify-end pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
+                        ${q.needs_review ? `<button onclick="approveQuestion(${q.id})" class="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-600 hover:text-white cursor-pointer" title="Approve & clear Needs Review">✓ Approve</button>` : ''}
                         <button onclick="toggleCartQuestion(${q.id})" class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                             inCart
                                 ? 'bg-emerald-600 text-white'
@@ -1720,14 +2216,14 @@ function renderQuestions(data) {
 
         // Comfortable Academic Card Layout
         return `
-            <div data-id="${q.id}" class="question-card bg-white dark:bg-slate-800 p-5 rounded-2xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 ring-1 ring-brand-500' : 'border-slate-200/80 dark:border-slate-700/80'} shadow-sm flex flex-col md:flex-row md:items-start justify-between gap-4 transition-all">
+            <div data-id="${q.id}" class="question-card bg-white dark:bg-slate-800 p-5 rounded-2xl border ${isSelected ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 ring-1 ring-brand-500' : (q.needs_review ? 'border-amber-300/90 dark:border-amber-700/80' : 'border-slate-200/80 dark:border-slate-700/80')} shadow-sm flex flex-col md:flex-row md:items-start justify-between gap-4 transition-all">
                 <div class="flex items-start space-x-3.5 flex-1">
                     <!-- Checkbox for multi-select -->
-                    <input type="checkbox" onchange="toggleSelectQuestion(${q.id}, this.checked)" ${isSelected ? 'checked' : ''} class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 cursor-pointer mt-1 shrink-0" title="Select to delete or add to cart">
+                    <input type="checkbox" onchange="toggleSelectQuestion(${q.id}, this.checked)" ${isSelected ? 'checked' : ''} class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 cursor-pointer mt-1 shrink-0" title="Select to tag, merge, export, or add to cart">
 
                     <div class="space-y-2 flex-1">
                         <!-- Badges Row -->
-                        <div class="flex flex-wrap items-center gap-2">
+                        <div class="flex flex-wrap items-center gap-1.5">
                             ${isRepeated ? `
                                 <span class="inline-flex items-center space-x-1 text-xs font-bold px-2.5 py-0.5 rounded-full high-frequency-badge shadow-xs">
                                     <span>🔥 Appeared ${freq}x</span>
@@ -1737,6 +2233,12 @@ function renderQuestions(data) {
                                     Appeared 1x
                                 </span>
                             `}
+
+                            ${q.class_level ? `
+                                <span class="inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/60">
+                                    🎓 ${escapeHtml(q.class_level)}
+                                </span>
+                            ` : ''}
 
                             ${q.subject ? `
                                 <span class="inline-flex items-center text-xs font-semibold px-2.5 py-0.5 rounded-full bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/60">
@@ -1748,6 +2250,33 @@ function renderQuestions(data) {
                                 <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300">
                                     🏷️ ${escapeHtml(q.topic)}
                                 </span>
+                            ` : ''}
+
+                            ${q.question_type ? `
+                                <span class="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700/80 text-slate-700 dark:text-slate-200">
+                                    ${escapeHtml(q.question_type)}
+                                </span>
+                            ` : ''}
+
+                            ${q.difficulty ? `
+                                <span class="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full border ${diffCls}">
+                                    ${escapeHtml(q.difficulty)}
+                                </span>
+                            ` : ''}
+
+                            ${q.default_marks != null ? `
+                                <span class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-700 text-slate-800 dark:text-slate-100 tabular-nums">
+                                    [${q.default_marks}m]
+                                </span>
+                            ` : ''}
+
+                            ${q.needs_review ? `
+                                <span class="inline-flex items-center space-x-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/70 dark:border-amber-700/70" title="${escapeHtml(q.review_reason || 'Flagged for teacher verification')}">
+                                    <span>⚠️ ${escapeHtml(q.review_reason || 'Needs Review')}</span>
+                                </span>
+                                <button onclick="approveQuestion(${q.id})" class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs cursor-pointer transition">
+                                    ✓ Approve
+                                </button>
                             ` : ''}
 
                             ${q.sources && q.sources.length ? `
@@ -1844,13 +2373,13 @@ function toggleSelectAllPage(isChecked) {
         }
     });
     updateBulkActionBar();
-    renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    reRenderCurrentQuestions();
 }
 
 function clearSelection() {
     state.selectedIds.clear();
     updateBulkActionBar();
-    renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    reRenderCurrentQuestions();
 }
 
 function updateBulkActionBar() {
@@ -1868,10 +2397,14 @@ function updateBulkActionBar() {
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
-            <span>Delete Selected (${count})</span>
+            <span>Delete (${count})</span>
         `;
     }
-    bulkAddCartBtn.textContent = `+ Add to Cart (${count})`;
+    if (bulkMergeBtn) {
+        bulkMergeBtn.disabled = count < 2;
+        bulkMergeBtn.classList.toggle('opacity-50', count < 2);
+    }
+    bulkAddCartBtn.textContent = `+ Cart (${count})`;
 
     if (count > 0) {
         bulkActionBar.classList.remove('hidden');
@@ -1916,7 +2449,7 @@ async function handleBulkDelete() {
         }
 
         // Also remove from cart if present
-        state.cart = state.cart.filter(item => !state.selectedIds.has(item.id));
+        state.cart = state.cart.filter(item => item.item_type === 'section' || !state.selectedIds.has(item.id));
         saveCart();
 
         // Clear selection
@@ -1936,21 +2469,46 @@ async function handleBulkDelete() {
     }
 }
 
-function handleBulkAddToCart() {
+function makeCartQuestionItem(question) {
+    return {
+        item_type: 'question',
+        id: question.id,
+        question_text: question.question_text,
+        class_level: question.class_level || '',
+        subject: question.subject || '',
+        topic: question.topic || '',
+        marks: question.default_marks != null ? question.default_marks : null
+    };
+}
+
+async function handleBulkAddToCart() {
     const ids = Array.from(state.selectedIds);
     if (ids.length === 0) return;
+
+    const qMap = new Map((state.currentQuestions || []).map(q => [q.id, q]));
+    const missingIds = ids.filter(id => !qMap.has(id));
+    if (missingIds.length > 0) {
+        try {
+            const res = await apiFetch('/api/questions/by-ids', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question_ids: missingIds })
+            });
+            if (res.ok) {
+                const extraQuestions = await res.json();
+                (extraQuestions || []).forEach(q => qMap.set(q.id, q));
+            }
+        } catch (err) {
+            console.warn('Could not fetch cross-page selected questions:', err);
+        }
+    }
 
     let addedCount = 0;
     ids.forEach(id => {
         if (!isQuestionInCart(id)) {
-            const question = state.currentQuestions.find(q => q.id === id);
+            const question = qMap.get(id);
             if (question) {
-                state.cart.push({
-                    id: question.id,
-                    question_text: question.question_text,
-                    subject: question.subject,
-                    topic: question.topic
-                });
+                state.cart.push(makeCartQuestionItem(question));
                 addedCount++;
             }
         }
@@ -1959,13 +2517,533 @@ function handleBulkAddToCart() {
     saveCart();
     state.selectedIds.clear();
     updateBulkActionBar();
-    renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    reRenderCurrentQuestions();
     showToast(`Added ${addedCount} questions to Question Cart`, "success");
 }
 
+// ---------- Bulk Tag, Approve, Merge, Near-Duplicates, Auto-Pick & Curation ----------
+window.approveQuestion = async function(id) {
+    try {
+        const res = await apiFetch(`/api/questions/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ needs_review: false, review_reason: '' })
+        });
+        if (!res.ok) throw new Error('Failed to approve question');
+        triggerHaptic('success');
+        showToast("Question marked Approved ✓", "success", 1800);
+        clearPageCache();
+        await loadMetadata();
+        await loadQuestions(true);
+    } catch (err) {
+        showToast("Approval failed: " + err.message, "error");
+    }
+};
+
+function openBulkTagModal() {
+    const count = state.selectedIds.size;
+    if (count === 0) {
+        showToast("Select at least 1 question first.", "info");
+        return;
+    }
+    const sub = document.getElementById('bulk-tag-subtitle');
+    if (sub) sub.textContent = `Applying changes to ${count} selected question(s). Blank fields remain unchanged.`;
+    ['bulk-tag-class', 'bulk-tag-subject', 'bulk-tag-topic', 'bulk-tag-type', 'bulk-tag-difficulty', 'bulk-tag-marks', 'bulk-tag-review'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    document.getElementById('bulk-tag-modal')?.classList.remove('hidden');
+}
+
+function closeBulkTagModal() {
+    document.getElementById('bulk-tag-modal')?.classList.add('hidden');
+}
+
+async function handleSaveBulkTag() {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length === 0) return;
+
+    const payload = { question_ids: ids };
+    const cls = document.getElementById('bulk-tag-class')?.value.trim();
+    const subj = document.getElementById('bulk-tag-subject')?.value.trim();
+    const top = document.getElementById('bulk-tag-topic')?.value.trim();
+    const qtype = document.getElementById('bulk-tag-type')?.value;
+    const diff = document.getElementById('bulk-tag-difficulty')?.value;
+    const marksRaw = document.getElementById('bulk-tag-marks')?.value.trim();
+    const rev = document.getElementById('bulk-tag-review')?.value;
+
+    if (cls) payload.class_level = cls;
+    if (subj) payload.subject = subj;
+    if (top) payload.topic = top;
+    if (qtype) payload.question_type = qtype;
+    if (diff) payload.difficulty = diff;
+    if (marksRaw) {
+        const m = parseFloat(marksRaw);
+        if (!isNaN(m) && m > 0) payload.default_marks = m;
+    }
+    if (rev === 'approve') {
+        payload.needs_review = false;
+        payload.review_reason = '';
+    } else if (rev === 'flag') {
+        payload.needs_review = true;
+        payload.review_reason = 'Flagged manually by teacher';
+    }
+
+    if (Object.keys(payload).length <= 1) {
+        showToast("Enter or choose at least one tag/field to apply.", "warning");
+        return;
+    }
+
+    const btn = document.getElementById('save-bulk-tag-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Updating...'; }
+    try {
+        const res = await apiFetch('/api/questions/bulk-update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Bulk update failed');
+        }
+        const data = await res.json();
+        closeBulkTagModal();
+        state.selectedIds.clear();
+        updateBulkActionBar();
+        clearPageCache();
+        await loadMetadata();
+        await loadQuestions(true);
+        triggerHaptic('success');
+        showToast(data.message || `Updated ${data.updated_count} question(s)!`, "success");
+    } catch (err) {
+        showToast("Bulk tag failed: " + err.message, "error");
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Apply Tags'; }
+    }
+}
+
+async function handleBulkApprove() {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length === 0) return;
+    try {
+        const res = await apiFetch('/api/questions/bulk-update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question_ids: ids, needs_review: false, review_reason: '' })
+        });
+        if (!res.ok) throw new Error('Failed to approve selected questions');
+        state.selectedIds.clear();
+        updateBulkActionBar();
+        clearPageCache();
+        await loadMetadata();
+        await loadQuestions(true);
+        triggerHaptic('success');
+        showToast(`Approved ${ids.length} question(s) ✓`, "success");
+    } catch (err) {
+        showToast("Error: " + err.message, "error");
+    }
+}
+
+function closeMergeDupsModal() {
+    document.getElementById('merge-duplicates-modal')?.classList.add('hidden');
+}
+
+async function openMergeModalForSelection() {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length < 2) {
+        showToast("Select at least 2 questions to merge.", "warning");
+        return;
+    }
+
+    const qMap = new Map((state.currentQuestions || []).map(q => [q.id, q]));
+    const missingIds = ids.filter(id => !qMap.has(id));
+    if (missingIds.length > 0) {
+        try {
+            const res = await apiFetch('/api/questions/by-ids', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question_ids: missingIds })
+            });
+            if (res.ok) {
+                const extraQuestions = await res.json();
+                (extraQuestions || []).forEach(q => qMap.set(q.id, q));
+            }
+        } catch (err) {
+            showToast("Failed to load selected questions across pages.", "error");
+            return;
+        }
+    }
+
+    const questions = ids.map(id => qMap.get(id)).filter(Boolean);
+    if (questions.length < 2) {
+        showToast("Could not load at least 2 selected questions to merge.", "warning");
+        return;
+    }
+
+    const subEl = document.getElementById('merge-dups-subtitle');
+    if (subEl) subEl.textContent = `Choose which of the ${questions.length} selected versions to keep; others will merge into its frequency and sources.`;
+
+    const body = document.getElementById('merge-dups-body');
+    if (!body) return;
+
+    const defaultKeep = questions[0].id;
+    body.innerHTML = `
+        <div class="space-y-3">
+            <p class="text-xs font-bold text-slate-700 dark:text-slate-200">Select the primary question version to keep:</p>
+            ${questions.map((q, idx) => `
+                <label class="flex items-start space-x-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/50 cursor-pointer hover:border-brand-400">
+                    <input type="radio" name="manual-merge-target" value="${q.id}" ${idx === 0 ? 'checked' : ''} class="mt-1 text-brand-600 focus:ring-brand-500">
+                    <div class="text-xs space-y-1 flex-1">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="font-bold text-brand-600 dark:text-brand-400">ID #${q.id}</span>
+                            <span class="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-semibold">${q.frequency || 1}x</span>
+                            ${q.topic ? `<span class="text-slate-500">${escapeHtml(q.topic)}</span>` : ''}
+                        </div>
+                        <p class="text-slate-900 dark:text-slate-100 font-medium">${escapeHtml(q.question_text)}</p>
+                    </div>
+                </label>
+            `).join('')}
+            <div>
+                <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Merged Question Text (Optional Override)</label>
+                <textarea id="manual-merge-text" rows="3" class="w-full text-xs p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">${escapeHtml(questions.find(q => q.id === defaultKeep)?.question_text || '')}</textarea>
+            </div>
+            <div class="flex justify-end">
+                <button type="button" id="confirm-manual-merge-btn" class="px-5 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-sm cursor-pointer">🔗 Merge Selected Questions</button>
+            </div>
+        </div>
+    `;
+
+    body.querySelectorAll('input[name="manual-merge-target"]').forEach(r => {
+        r.addEventListener('change', (e) => {
+            const picked = questions.find(q => q.id === parseInt(e.target.value, 10));
+            const ta = document.getElementById('manual-merge-text');
+            if (picked && ta) ta.value = picked.question_text;
+        });
+    });
+
+    document.getElementById('confirm-manual-merge-btn')?.addEventListener('click', async () => {
+        const checked = body.querySelector('input[name="manual-merge-target"]:checked');
+        const targetId = checked ? parseInt(checked.value, 10) : defaultKeep;
+        const sourceIds = ids.filter(id => id !== targetId);
+        const mergedText = document.getElementById('manual-merge-text')?.value.trim();
+
+        const btn = document.getElementById('confirm-manual-merge-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Merging...'; }
+        try {
+            const res = await apiFetch('/api/questions/merge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target_id: targetId, source_ids: sourceIds, merged_text: mergedText || null })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Merge failed');
+            }
+            state.cart = state.cart.filter(it => it.item_type === 'section' || !sourceIds.includes(it.id));
+            saveCart();
+            state.selectedIds.clear();
+            updateBulkActionBar();
+            closeMergeDupsModal();
+            clearPageCache();
+            await loadMetadata();
+            await loadQuestions(true);
+            triggerHaptic('success');
+            showToast(`Merged ${sourceIds.length + 1} questions cleanly!`, "success");
+        } catch (err) {
+            showToast("Merge failed: " + err.message, "error");
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = '🔗 Merge Selected Questions'; }
+        }
+    });
+
+    document.getElementById('merge-duplicates-modal')?.classList.remove('hidden');
+}
+
+async function openFindDuplicatesModal() {
+    const modal = document.getElementById('merge-duplicates-modal');
+    const body = document.getElementById('merge-dups-body');
+    const subEl = document.getElementById('merge-dups-subtitle');
+    if (!modal || !body) return;
+
+    if (subEl) subEl.textContent = "Scanning the library for near-identical phrasing, spelling typos, or quote variations...";
+    body.innerHTML = `<div class="p-10 text-center text-slate-400 text-xs"><span class="inline-block animate-spin text-2xl mb-2">⏳</span><p>Finding duplicate clusters...</p></div>`;
+    modal.classList.remove('hidden');
+
+    try {
+        const res = await apiFetch('/api/questions/duplicates?threshold=0.80&limit_groups=40');
+        if (!res.ok) throw new Error('Duplicate scan failed');
+        const data = await res.json();
+        const groups = data.groups || [];
+
+        if (subEl) subEl.textContent = `Found ${data.total_groups} near-duplicate cluster(s) across the library.`;
+
+        if (groups.length === 0) {
+            body.innerHTML = `
+                <div class="p-10 text-center text-slate-500 dark:text-slate-400 space-y-2">
+                    <span class="text-3xl block">✨</span>
+                    <p class="text-sm font-bold">No near-duplicate clusters found!</p>
+                    <p class="text-xs">Your question library looks clean at 80%+ similarity threshold.</p>
+                </div>
+            `;
+            return;
+        }
+
+        body.innerHTML = groups.map((g, gIdx) => `
+            <div class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 p-4 space-y-2.5" id="dup-group-${gIdx}">
+                <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 px-2.5 py-0.5 rounded-full">
+                        Cluster #${gIdx + 1} • ${Math.round(g.similarity || 80)}% Match (${g.questions.length} variants)
+                    </span>
+                    <button type="button" data-group-idx="${gIdx}" class="merge-cluster-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer transition">
+                        🔗 Merge Into Selected
+                    </button>
+                </div>
+                <div class="space-y-1.5">
+                    ${g.questions.map((q) => `
+                        <label class="flex items-start space-x-2.5 p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 cursor-pointer text-xs">
+                            <input type="radio" name="dup-keep-${gIdx}" value="${q.id}" ${q.id === g.suggested_target_id ? 'checked' : ''} class="mt-0.5 text-brand-600 focus:ring-brand-500">
+                            <div class="flex-1">
+                                <div class="flex flex-wrap items-center gap-1.5 mb-0.5">
+                                    <span class="font-bold text-slate-700 dark:text-slate-200">#${q.id}</span>
+                                    <span class="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-700 font-semibold">${q.frequency || 1}x</span>
+                                    ${q.topic ? `<span class="text-slate-400">🏷️ ${escapeHtml(q.topic)}</span>` : ''}
+                                </div>
+                                <p class="text-slate-800 dark:text-slate-100">${escapeHtml(q.question_text)}</p>
+                            </div>
+                        </label>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+
+        body.querySelectorAll('.merge-cluster-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const gIdx = parseInt(btn.getAttribute('data-group-idx'), 10);
+                const g = groups[gIdx];
+                const radio = body.querySelector(`input[name="dup-keep-${gIdx}"]:checked`);
+                const targetId = radio ? parseInt(radio.value, 10) : g.suggested_target_id;
+                const sourceIds = g.questions.map(q => q.id).filter(id => id !== targetId);
+
+                btn.disabled = true;
+                btn.textContent = 'Merging...';
+                try {
+                    const mRes = await apiFetch('/api/questions/merge', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target_id: targetId, source_ids: sourceIds })
+                    });
+                    if (!mRes.ok) {
+                        const err = await mRes.json();
+                        throw new Error(err.detail || 'Merge failed');
+                    }
+                    document.getElementById(`dup-group-${gIdx}`)?.remove();
+                    const remainingClusters = body.querySelectorAll('[id^="dup-group-"]').length;
+                    if (subEl) {
+                        subEl.textContent = remainingClusters > 0
+                            ? `${remainingClusters} near-duplicate cluster(s) remaining in view.`
+                            : 'All displayed near-duplicate clusters have been resolved!';
+                    }
+                    if (remainingClusters === 0) {
+                        body.innerHTML = `
+                            <div class="p-10 text-center text-slate-500 dark:text-slate-400 space-y-2">
+                                <span class="text-3xl block">✨</span>
+                                <p class="text-sm font-bold">All duplicate clusters merged!</p>
+                                <p class="text-xs">Close this modal or reopen Find Duplicates to re-scan the library.</p>
+                            </div>
+                        `;
+                    }
+                    state.cart = state.cart.filter(it => it.item_type === 'section' || !sourceIds.includes(it.id));
+                    saveCart();
+                    clearPageCache();
+                    await loadMetadata();
+                    await loadQuestions(true);
+                    triggerHaptic('success');
+                    showToast("Cluster merged cleanly!", "success", 2000);
+                } catch (err) {
+                    btn.disabled = false;
+                    btn.textContent = '🔗 Merge Into Selected';
+                    showToast("Merge failed: " + err.message, "error");
+                }
+            });
+        });
+    } catch (err) {
+        body.innerHTML = `<div class="p-6 text-center text-rose-500 text-xs">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+function openAutoPickModal() {
+    document.getElementById('auto-pick-modal')?.classList.remove('hidden');
+}
+
+function closeAutoPickModal() {
+    document.getElementById('auto-pick-modal')?.classList.add('hidden');
+}
+
+async function handleAutoPickSubmit(e) {
+    e.preventDefault();
+    const btn = document.getElementById('submit-auto-pick-btn');
+    const cls = document.getElementById('auto-pick-class')?.value || null;
+    const subj = document.getElementById('auto-pick-subject')?.value || null;
+    const topicVal = document.getElementById('auto-pick-topic')?.value || '';
+    const qtype = document.getElementById('auto-pick-type')?.value || null;
+    const diff = document.getElementById('auto-pick-difficulty')?.value || null;
+    const countVal = parseInt(document.getElementById('auto-pick-count')?.value || '10', 10);
+    const targetMarksRaw = document.getElementById('auto-pick-target-marks')?.value.trim();
+    const targetMarksNum = targetMarksRaw ? parseFloat(targetMarksRaw) : NaN;
+    if (targetMarksRaw && (isNaN(targetMarksNum) || targetMarksNum < 1)) {
+        showToast("Target total marks must be at least 1.", "warning");
+        return;
+    }
+    const useTargetMarks = Boolean(targetMarksRaw) && !isNaN(targetMarksNum) && targetMarksNum >= 1;
+    const preferRepeated = document.getElementById('auto-pick-most-repeated')?.checked ?? true;
+    const spreadTopics = document.getElementById('auto-pick-spread-topics')?.checked ?? true;
+    const excludeReview = document.getElementById('auto-pick-exclude-review')?.checked ?? true;
+
+    const existingIds = getCartQuestions().map(c => c.id).filter(id => id != null);
+    const payload = {
+        class_level: cls,
+        subject: subj,
+        topics: topicVal ? [topicVal] : null,
+        question_type: qtype,
+        difficulty: diff,
+        count: useTargetMarks ? null : (countVal > 0 ? countVal : 10),
+        target_marks: useTargetMarks ? targetMarksNum : null,
+        prefer_most_repeated: preferRepeated,
+        spread_topics: spreadTopics,
+        exclude_needs_review: excludeReview,
+        exclude_ids: existingIds
+    };
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Picking Questions...'; }
+    try {
+        const res = await apiFetch('/api/questions/auto-pick', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Auto-pick failed');
+        }
+        const data = await res.json();
+        const picked = data.questions || [];
+        if (picked.length === 0) {
+            showToast("No matching questions found (outside your current Cart). Try loosening filters.", "warning");
+            return;
+        }
+        picked.forEach(q => {
+            if (!isQuestionInCart(q.id)) state.cart.push(makeCartQuestionItem(q));
+        });
+        saveCart();
+        reRenderCurrentQuestions();
+        closeAutoPickModal();
+        openCart();
+        triggerHaptic('success');
+        showToast(`Auto-picked ${picked.length} questions (${data.total_marks} marks) into your Cart! ⚡`, "success");
+    } catch (err) {
+        showToast("Auto-pick error: " + err.message, "error");
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ Auto-Pick & Open Cart'; }
+    }
+}
+
+function openCurateModal() {
+    document.getElementById('curate-modal')?.classList.remove('hidden');
+}
+
+function closeCurateModal() {
+    document.getElementById('curate-modal')?.classList.add('hidden');
+}
+
+function renderCurateReport(data) {
+    const body = document.getElementById('curate-preview-body');
+    if (!body) return;
+    body.innerHTML = `
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                <span class="text-[10px] uppercase text-slate-400 block">Before → After</span>
+                <span class="font-extrabold text-sm text-slate-900 dark:text-white">${data.total_before} → ${data.total_after}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60">
+                <span class="text-[10px] uppercase text-rose-500 block">Dividers Dropped</span>
+                <span class="font-extrabold text-sm text-rose-700 dark:text-rose-300">${data.dividers_removed}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60">
+                <span class="text-[10px] uppercase text-emerald-500 block">Duplicates Merged</span>
+                <span class="font-extrabold text-sm text-emerald-700 dark:text-emerald-300">${data.duplicates_merged}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60">
+                <span class="text-[10px] uppercase text-amber-600 block">Needs Review</span>
+                <span class="font-extrabold text-sm text-amber-800 dark:text-amber-300">${data.needs_review_count}</span>
+            </div>
+        </div>
+        <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 space-y-1">
+            <p><strong>Cleaned Texts:</strong> ${data.questions_cleaned} &nbsp;|&nbsp; <strong>Footers Stripped:</strong> ${data.footers_stripped} &nbsp;|&nbsp; <strong>Markers Stripped:</strong> ${data.markers_stripped} &nbsp;|&nbsp; <strong>Dual OR Split:</strong> ${data.dual_or_split}</p>
+            ${data.backup_path ? `<p class="text-emerald-700 dark:text-emerald-300 font-semibold">✓ JSON Backup Created: ${escapeHtml(data.backup_path)}</p>` : ''}
+            <p class="text-slate-500">${data.dry_run ? 'Preview only — database has NOT been modified yet.' : 'Applied successfully to live database!'}</p>
+        </div>
+    `;
+}
+
+async function runCuratePreview() {
+    const btn = document.getElementById('btn-curate-preview');
+    const body = document.getElementById('curate-preview-body');
+    if (btn) { btn.disabled = true; btn.textContent = 'Analyzing...'; }
+    if (body) body.innerHTML = `<div class="p-6 text-center text-slate-400">Scanning database safely...</div>`;
+    try {
+        const res = await apiFetch('/api/admin/curate/preview', { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Preview failed');
+        }
+        const data = await res.json();
+        renderCurateReport(data);
+    } catch (err) {
+        if (body) body.innerHTML = `<div class="p-4 text-rose-500">${escapeHtml(err.message)}</div>`;
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Run Dry-Run Preview'; }
+    }
+}
+
+async function runCurateApply() {
+    if (!confirm("Create a JSON backup first and apply Automated Smart Curation to the entire Question Library?")) return;
+    const btn = document.getElementById('btn-curate-apply');
+    if (btn) { btn.disabled = true; btn.textContent = 'Curating...'; }
+    try {
+        const res = await apiFetch('/api/admin/curate/run', { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Curation failed');
+        }
+        const data = await res.json();
+        renderCurateReport(data);
+        state.selectedIds.clear();
+        clearPageCache();
+        await loadMetadata();
+        await loadQuestions(true);
+        triggerHaptic('success');
+        showToast("Smart Curation completed with backup!", "success");
+    } catch (err) {
+        showToast("Curation failed: " + err.message, "error");
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✨ Backup & Apply Curation'; }
+    }
+}
+
 // Cart State Management
+function getCartQuestions() {
+    return state.cart.filter(item => item.item_type !== 'section');
+}
+
 function isQuestionInCart(id) {
-    return state.cart.some(item => item.id === id);
+    return id != null && state.cart.some(item => item.item_type !== 'section' && item.id === id);
+}
+
+function calcCartTotalMarks() {
+    return getCartQuestions().reduce((sum, item) => {
+        const m = parseFloat(item.marks);
+        return sum + (!isNaN(m) && m > 0 ? m : 0);
+    }, 0);
 }
 
 function saveCart() {
@@ -1975,7 +3053,8 @@ function saveCart() {
 }
 
 function updateCartBadge() {
-    cartBadge.textContent = state.cart.length;
+    const qCount = getCartQuestions().length;
+    cartBadge.textContent = qCount;
     openCartBtn.classList.remove('animate-cart-bounce');
     void openCartBtn.offsetWidth; // trigger reflow
     openCartBtn.classList.add('animate-cart-bounce');
@@ -1983,8 +3062,8 @@ function updateCartBadge() {
     // Synchronize mobile bottom dock cart badge
     const mobCartBadge = document.getElementById('mob-cart-badge');
     if (mobCartBadge) {
-        mobCartBadge.textContent = state.cart.length;
-        if (state.cart.length > 0) {
+        mobCartBadge.textContent = qCount;
+        if (qCount > 0) {
             mobCartBadge.classList.remove('hidden');
         } else {
             mobCartBadge.classList.add('hidden');
@@ -1993,7 +3072,7 @@ function updateCartBadge() {
 }
 
 window.toggleCartQuestion = function(id) {
-    const existingIndex = state.cart.findIndex(item => item.id === id);
+    const existingIndex = state.cart.findIndex(item => item.item_type !== 'section' && item.id === id);
     if (existingIndex > -1) {
         state.cart.splice(existingIndex, 1);
         triggerHaptic('medium');
@@ -2001,40 +3080,41 @@ window.toggleCartQuestion = function(id) {
     } else {
         const question = state.currentQuestions.find(q => q.id === id);
         if (question) {
-            state.cart.push({
-                id: question.id,
-                question_text: question.question_text,
-                subject: question.subject,
-                topic: question.topic
-            });
+            state.cart.push(makeCartQuestionItem(question));
             triggerHaptic('light');
             showToast("Added to Question Cart", "success", 2000);
         }
     }
     saveCart();
-    renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    reRenderCurrentQuestions();
 };
 
 function addCurrentPageToCart() {
     let addedCount = 0;
     state.currentQuestions.forEach(q => {
         if (!isQuestionInCart(q.id)) {
-            state.cart.push({
-                id: q.id,
-                question_text: q.question_text,
-                subject: q.subject,
-                topic: q.topic
-            });
+            state.cart.push(makeCartQuestionItem(q));
             addedCount++;
         }
     });
     saveCart();
-    renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    reRenderCurrentQuestions();
     if (addedCount > 0) {
         showToast(`Added ${addedCount} page questions to Question Cart`, "success");
     } else {
         showToast("All questions on this page are already in your cart", "info");
     }
+}
+
+function addCartSectionDivider() {
+    const existingSections = state.cart.filter(it => it.item_type === 'section').length;
+    const letter = String.fromCharCode(65 + (existingSections % 26));
+    state.cart.push({
+        item_type: 'section',
+        section_title: `Section ${letter}`
+    });
+    saveCart();
+    triggerHaptic('light');
 }
 
 function openCart() {
@@ -2051,25 +3131,41 @@ function closeCart() {
 
 function clearCart() {
     if (state.cart.length === 0) return;
-    if (confirm("Clear all selected questions from your cart?")) {
+    if (confirm("Clear all questions and sections from your cart?")) {
         triggerHaptic('medium');
         state.cart = [];
+        state.expandedCartItems?.clear();
         saveCart();
-        renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+        reRenderCurrentQuestions();
+    }
+}
+
+function syncCartTotalMarksUI() {
+    const total = calcCartTotalMarks();
+    const formatted = Number.isInteger(total) ? String(total) : total.toFixed(1);
+    if (cartTotalMarksEl) cartTotalMarksEl.textContent = formatted;
+    if (cartHeaderMaxMarks) {
+        cartHeaderMaxMarks.placeholder = total > 0 ? `Auto (${formatted})` : 'Auto';
     }
 }
 
 function renderCartDrawer() {
-    cartCountSubtitle.textContent = `${state.cart.length} questions in current paper`;
+    const qCount = getCartQuestions().length;
+    const secCount = state.cart.filter(it => it.item_type === 'section').length;
+    cartCountSubtitle.textContent = secCount > 0
+        ? `${qCount} questions, ${secCount} section(s)`
+        : `${qCount} questions in current paper`;
 
-    if (state.cart.length === 0) {
+    syncCartTotalMarksUI();
+
+    if (qCount === 0 && state.cart.length === 0) {
         cartItemsContainer.innerHTML = `
             <div class="h-64 flex flex-col items-center justify-center text-slate-400 space-y-2">
                 <svg class="w-10 h-10 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
                 </svg>
                 <p class="text-sm font-medium">Your question cart is empty</p>
-                <p class="text-xs text-slate-400">Click "+ Add to Cart" on any question to select it</p>
+                <p class="text-xs text-slate-400">Click "+ Add to Cart" or use "⚡ Auto-Pick Paper"</p>
             </div>
         `;
         exportDocxBtn.disabled = true;
@@ -2079,42 +3175,72 @@ function renderCartDrawer() {
         return;
     }
 
-    exportDocxBtn.disabled = false;
-    exportDocxBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-brand-600 hover:bg-brand-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-brand-500/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm";
-    exportPdfBtn.disabled = false;
-    exportPdfBtn.className = "w-full flex items-center justify-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-rose-600/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm";
+    const canExport = qCount > 0;
+    exportDocxBtn.disabled = !canExport;
+    exportDocxBtn.className = canExport
+        ? "w-full flex items-center justify-center space-x-1.5 bg-brand-600 hover:bg-brand-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-brand-500/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm"
+        : "w-full flex items-center justify-center space-x-1.5 bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-bold py-3 rounded-xl cursor-not-allowed transition-all text-xs sm:text-sm";
+    exportPdfBtn.disabled = !canExport;
+    exportPdfBtn.className = canExport
+        ? "w-full flex items-center justify-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-rose-600/25 active:scale-[0.98] cursor-pointer text-xs sm:text-sm"
+        : "w-full flex items-center justify-center space-x-1.5 bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 font-bold py-3 rounded-xl cursor-not-allowed transition-all text-xs sm:text-sm";
 
+    let qNum = 0;
     cartItemsContainer.innerHTML = state.cart.map((item, index) => {
+        if (item.item_type === 'section') {
+            return `
+                <div class="bg-brand-50/70 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-800/70 rounded-xl p-2.5 flex items-center justify-between gap-2 shadow-xs">
+                    <div class="flex items-center space-x-2 flex-1 min-w-0">
+                        <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-brand-600 text-white shrink-0">SEC</span>
+                        <input type="text" value="${escapeHtml(item.section_title || '')}" placeholder="Section title (e.g. Section A: Reading)" oninput="updateCartSectionTitle(${index}, this.value)" class="w-full text-xs font-bold px-2 py-1 rounded-lg border border-brand-200 dark:border-brand-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    </div>
+                    <div class="flex items-center space-x-0.5 shrink-0">
+                        <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:bg-brand-100 dark:hover:bg-brand-900 disabled:opacity-25 cursor-pointer" title="Move Up">▲</button>
+                        <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:bg-brand-100 dark:hover:bg-brand-900 disabled:opacity-25 cursor-pointer" title="Move Down">▼</button>
+                        <button onclick="removeFromCart(${index})" class="w-7 h-7 rounded-lg flex items-center justify-center text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-950 font-bold cursor-pointer" title="Remove">✕</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        qNum++;
         const isExpanded = state.expandedCartItems && state.expandedCartItems.has(index);
         const isLong = (item.question_text || '').length > 80;
+        const marksVal = item.marks != null && item.marks !== '' ? item.marks : '';
 
         return `
-        <div class="bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 rounded-xl p-3 flex items-start justify-between gap-3 shadow-xs">
+        <div class="bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 rounded-xl p-3 flex items-start justify-between gap-2.5 shadow-xs">
             <div class="flex items-start space-x-2 flex-1 min-w-0">
-                <span class="w-5 h-5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    ${index + 1}
+                <span class="w-5 h-5 rounded-full bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
+                    ${qNum}
                 </span>
                 <div class="min-w-0 flex-1">
                     <p class="text-xs text-slate-800 dark:text-slate-100 leading-snug ${isExpanded ? '' : 'line-clamp-2'}">
                         ${escapeHtml(item.question_text)}
                     </p>
-                    ${isLong ? `
-                        <button type="button" onclick="toggleCartTextExpand(${index})" class="text-[10px] text-brand-600 dark:text-brand-400 font-semibold hover:underline mt-0.5 cursor-pointer">
-                            ${isExpanded ? 'Show less' : 'Show full'}
-                        </button>
-                    ` : ''}
+                    <div class="flex items-center flex-wrap gap-2 mt-1.5">
+                        ${isLong ? `
+                            <button type="button" onclick="toggleCartTextExpand(${index})" class="text-[10px] text-brand-600 dark:text-brand-400 font-semibold hover:underline cursor-pointer">
+                                ${isExpanded ? 'Show less' : 'Show full'}
+                            </button>
+                        ` : ''}
+                        <label class="inline-flex items-center space-x-1 text-[10px] text-slate-500 dark:text-slate-400">
+                            <span>Marks:</span>
+                            <input type="number" step="0.5" min="0" value="${marksVal}" placeholder="—" oninput="updateCartItemMarks(${index}, this.value)" class="w-14 text-center text-[11px] font-bold px-1.5 py-0.5 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white tabular-nums">
+                        </label>
+                    </div>
                 </div>
             </div>
 
             <!-- Controls: Move Up, Move Down, Remove with comfortable touch targets -->
-            <div class="flex items-center space-x-1 shrink-0">
-                <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Up">
+            <div class="flex items-center space-x-0.5 shrink-0">
+                <button onclick="moveCartItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 disabled:opacity-20 cursor-pointer" title="Move Up">
                     ▲
                 </button>
-                <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer" title="Move Down">
+                <button onclick="moveCartItem(${index}, 1)" ${index === state.cart.length - 1 ? 'disabled' : ''} class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 disabled:opacity-20 cursor-pointer" title="Move Down">
                     ▼
                 </button>
-                <button onclick="removeFromCart(${index})" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold ml-0.5 cursor-pointer" title="Remove">
+                <button onclick="removeFromCart(${index})" class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold ml-0.5 cursor-pointer" title="Remove">
                     ✕
                 </button>
             </div>
@@ -2122,6 +3248,20 @@ function renderCartDrawer() {
         `;
     }).join('');
 }
+
+window.updateCartItemMarks = function(index, val) {
+    if (!state.cart[index]) return;
+    const num = parseFloat(val);
+    state.cart[index].marks = (!isNaN(num) && num > 0) ? num : null;
+    localStorage.setItem('qb_cart', JSON.stringify(state.cart));
+    syncCartTotalMarksUI();
+};
+
+window.updateCartSectionTitle = function(index, title) {
+    if (!state.cart[index]) return;
+    state.cart[index].section_title = title;
+    localStorage.setItem('qb_cart', JSON.stringify(state.cart));
+};
 
 window.toggleCartTextExpand = function(index) {
     if (!state.expandedCartItems) state.expandedCartItems = new Set();
@@ -2144,7 +3284,7 @@ window.moveCartItem = function(index, direction) {
 window.removeFromCart = function(index) {
     state.cart.splice(index, 1);
     saveCart();
-    renderQuestions({ items: state.currentQuestions, total: statTotal.textContent });
+    reRenderCurrentQuestions();
 };
 
 function setTemplateMode(useTemplate) {
@@ -2161,8 +3301,9 @@ function setTemplateMode(useTemplate) {
 }
 
 // Unified Export Function for Word and PDF with Loading States
-async function downloadQuestions(questionIds, format = 'docx', title = '') {
-    if (!questionIds || questionIds.length === 0) return;
+async function downloadQuestions(questionIds, format = 'docx', title = '', extraPayload = null) {
+    const hasItems = extraPayload && Array.isArray(extraPayload.items) && extraPayload.items.length > 0;
+    if ((!questionIds || questionIds.length === 0) && !hasItems) return;
 
     const isPdf = format.toLowerCase() === 'pdf';
     const label = isPdf ? 'PDF' : 'Word';
@@ -2176,16 +3317,15 @@ async function downloadQuestions(questionIds, format = 'docx', title = '') {
     if (exportDocxBtn) exportDocxBtn.disabled = true;
     if (exportPdfBtn) exportPdfBtn.disabled = true;
 
+    const bodyPayload = extraPayload
+        ? { ...extraPayload, title: title, format: format, use_template: state.useTemplate }
+        : { question_ids: questionIds, title: title, format: format, use_template: state.useTemplate, show_marks: true };
+
     try {
         const response = await apiFetch('/api/export', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question_ids: questionIds,
-                title: title,
-                format: format,
-                use_template: state.useTemplate
-            })
+            body: JSON.stringify(bodyPayload)
         });
 
         if (!response.ok) {
@@ -2214,7 +3354,7 @@ async function downloadQuestions(questionIds, format = 'docx', title = '') {
         if (activeBtn && originalContent) {
             activeBtn.innerHTML = originalContent;
         }
-        if (state.cart.length > 0) {
+        if (getCartQuestions().length > 0) {
             if (exportDocxBtn) exportDocxBtn.disabled = false;
             if (exportPdfBtn) exportPdfBtn.disabled = false;
         }
@@ -2226,16 +3366,55 @@ window.downloadSingleQuestion = function(id, format) {
     downloadQuestions([id], format, '');
 };
 
-// Download all questions currently in the Cart
+// Download all questions & sections currently in the Cart with School Paper Header
 function exportFromCart(format) {
-    if (state.cart.length === 0) {
+    const questionsInCart = getCartQuestions();
+    if (questionsInCart.length === 0) {
         showToast("Your cart is empty. Please add questions first.", "info");
         return;
     }
-    const questionIds = state.cart.map(item => item.id);
-    const title = paperTitleInput.value.trim();
+
+    const title = paperTitleInput ? paperTitleInput.value.trim() : '';
+    const totalAutoMarks = calcCartTotalMarks();
+    const formattedAuto = totalAutoMarks > 0
+        ? (Number.isInteger(totalAutoMarks) ? String(totalAutoMarks) : totalAutoMarks.toFixed(1))
+        : '';
+
+    const showHeader = cartShowHeaderCb ? Boolean(cartShowHeaderCb.checked) : true;
+    const rawMax = cartHeaderMaxMarks ? cartHeaderMaxMarks.value.trim() : '';
+    const parsedMax = parseFloat(rawMax || formattedAuto);
+    const paperHeader = {
+        institute_name: (cartHeaderInstitute?.value.trim() || "The Squire's Way"),
+        exam_title: title,
+        class_subject: cartHeaderClassSubject ? cartHeaderClassSubject.value.trim() : '',
+        time_allowed: cartHeaderTime ? cartHeaderTime.value.trim() : '',
+        max_marks: (!isNaN(parsedMax) && parsedMax > 0) ? parsedMax : null,
+        instructions: cartHeaderInstructions ? cartHeaderInstructions.value.trim() : '',
+        show_header: showHeader
+    };
+
+    const itemsPayload = state.cart.map(item => {
+        if (item.item_type === 'section') {
+            return {
+                item_type: 'section',
+                section_title: (item.section_title || '').trim() || 'Section'
+            };
+        }
+        const m = parseFloat(item.marks);
+        return {
+            item_type: 'question',
+            question_id: item.id,
+            question_text: item.question_text,
+            marks: (!isNaN(m) && m > 0) ? m : null
+        };
+    });
+
     showToast(`Generating ${format.toUpperCase()} question paper...`, "info", 2000);
-    downloadQuestions(questionIds, format, title);
+    downloadQuestions([], format, title, {
+        items: itemsPayload,
+        paper_header: paperHeader,
+        show_marks: true
+    });
 }
 
 // Download all selected questions from Bulk Selection Bar
@@ -2256,8 +3435,14 @@ window.openEditModal = function(id) {
 
     editIdInput.value = q.id;
     editTextInput.value = q.question_text;
+    if (editClassInput) editClassInput.value = q.class_level || '';
     editSubjectInput.value = q.subject || '';
     editTopicInput.value = q.topic || '';
+    if (editTypeSelect) editTypeSelect.value = q.question_type || '';
+    if (editDifficultySelect) editDifficultySelect.value = q.difficulty || '';
+    if (editMarksInput) editMarksInput.value = q.default_marks != null ? q.default_marks : '';
+    if (editNeedsReviewCb) editNeedsReviewCb.checked = Boolean(q.needs_review);
+    if (editReviewReasonSpan) editReviewReasonSpan.textContent = q.review_reason || '';
 
     editModal.classList.remove('hidden');
 };
@@ -2269,26 +3454,49 @@ function closeEditModal() {
 async function handleSaveEdit() {
     const id = editIdInput.value;
     const text = editTextInput.value.trim();
+    const classLevel = editClassInput ? editClassInput.value.trim() : '';
     const subject = editSubjectInput.value.trim();
     const topic = editTopicInput.value.trim();
+    const questionType = editTypeSelect ? editTypeSelect.value : '';
+    const difficulty = editDifficultySelect ? editDifficultySelect.value : '';
+    const marksRaw = editMarksInput ? editMarksInput.value.trim() : '';
+    const needsReview = editNeedsReviewCb ? Boolean(editNeedsReviewCb.checked) : false;
 
     if (!text) {
         showToast("Question text cannot be empty.", "warning");
         return;
     }
 
+    const payload = {
+        question_text: text,
+        class_level: classLevel,
+        subject: subject,
+        topic: topic,
+        question_type: questionType,
+        difficulty: difficulty,
+        needs_review: needsReview
+    };
+    if (!needsReview) {
+        payload.review_reason = '';
+    }
+    if (marksRaw) {
+        const parsed = parseFloat(marksRaw);
+        if (!isNaN(parsed) && parsed > 0) payload.default_marks = parsed;
+    } else {
+        payload.clear_default_marks = true;
+    }
+
     try {
         const res = await apiFetch(`/api/questions/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question_text: text,
-                subject: subject,
-                topic: topic
-            })
+            body: JSON.stringify(payload)
         });
 
-        if (!res.ok) throw new Error("Failed to save changes");
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || "Failed to save changes");
+        }
 
         closeEditModal();
         showToast("Question updated successfully", "success");
@@ -2297,11 +3505,15 @@ async function handleSaveEdit() {
         await loadQuestions(true);
 
         // Also update in cart if present
-        const cartIndex = state.cart.findIndex(c => c.id === parseInt(id));
+        const cartIndex = state.cart.findIndex(c => c.item_type !== 'section' && c.id === parseInt(id, 10));
         if (cartIndex > -1) {
             state.cart[cartIndex].question_text = text;
+            state.cart[cartIndex].class_level = classLevel;
             state.cart[cartIndex].subject = subject;
             state.cart[cartIndex].topic = topic;
+            if (payload.default_marks != null) {
+                state.cart[cartIndex].marks = payload.default_marks;
+            }
             saveCart();
         }
 
@@ -2319,7 +3531,7 @@ window.deleteQuestion = async function(id) {
         if (!res.ok) throw new Error("Failed to delete question");
 
         // Remove from cart if present
-        const cartIndex = state.cart.findIndex(c => c.id === id);
+        const cartIndex = state.cart.findIndex(c => c.item_type !== 'section' && c.id === id);
         if (cartIndex > -1) {
             state.cart.splice(cartIndex, 1);
             saveCart();
@@ -2337,8 +3549,12 @@ window.deleteQuestion = async function(id) {
 // Add Question Manually Modal Handling
 function openAddModal() {
     addQText.value = '';
+    if (addQClass) addQClass.value = '';
     addQSubject.value = '';
     addQTopic.value = '';
+    if (addQType) addQType.value = '';
+    if (addQDifficulty) addQDifficulty.value = '';
+    if (addQMarks) addQMarks.value = '';
     addQSource.value = 'Manual Entry';
     addModalMsg.className = 'hidden text-xs p-3 rounded-xl';
     addModalMsg.innerHTML = '';
@@ -2354,8 +3570,12 @@ function closeAddModal() {
 
 async function handleSaveManualQuestion() {
     const text = addQText.value.trim();
+    const classLevel = addQClass ? addQClass.value.trim() : '';
     const subject = addQSubject.value.trim();
     const topic = addQTopic.value.trim();
+    const questionType = addQType ? addQType.value : '';
+    const difficulty = addQDifficulty ? addQDifficulty.value : '';
+    const marksRaw = addQMarks ? addQMarks.value.trim() : '';
     const source = addQSource.value.trim() || 'Manual Entry';
 
     if (!text) {
@@ -2373,16 +3593,25 @@ async function handleSaveManualQuestion() {
         <span>Saving...</span>
     `;
 
+    const bodyPayload = {
+        question_text: text,
+        class_level: classLevel,
+        subject: subject,
+        topic: topic,
+        question_type: questionType,
+        difficulty: difficulty,
+        source: source
+    };
+    if (marksRaw) {
+        const m = parseFloat(marksRaw);
+        if (!isNaN(m) && m > 0) bodyPayload.default_marks = m;
+    }
+
     try {
         const res = await apiFetch('/api/questions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question_text: text,
-                subject: subject,
-                topic: topic,
-                source: source
-            })
+            body: JSON.stringify(bodyPayload)
         });
 
         if (!res.ok) {
@@ -2438,11 +3667,26 @@ function escapeHtml(str) {
 const examsState = {
     currentExams: [],
     activeExamId: null,
+    activeExam: null,
     activeSubmissions: [],
+    filteredSubmissions: [],
+    activeStats: null,
+    subSearchQuery: '',
+    subStatusFilter: 'all',
     activeSubmissionDetail: null,
     photoZoom: { scale: 1.0, rotation: 0 },
     isGradingDirty: false
 };
+
+function toLocalDatetimeInputValue(d) {
+    const dt = d instanceof Date ? d : new Date(d);
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    const hh = String(dt.getHours()).padStart(2, '0');
+    const min = String(dt.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
 
 // 1. Hash Routing and Tab Switching
 function switchView(viewName, param) {
@@ -2508,9 +3752,24 @@ function handleHashRoute() {
 
 window.addEventListener('hashchange', handleHashRoute);
 
+// Helper to flatten Cart questions with preceding Section Dividers attached
+function getStructuredCartQuestions() {
+    let activeSection = null;
+    const list = [];
+    for (const item of state.cart) {
+        if (item.item_type === 'section') {
+            activeSection = (item.section_title || '').trim() || null;
+        } else {
+            list.push({ ...item, section_title: activeSection });
+        }
+    }
+    return list;
+}
+
 // 2. Exam Setup Modal Logic
 function openExamSetupModal() {
-    if (!state.cart || state.cart.length === 0) {
+    const cartQuestions = getStructuredCartQuestions();
+    if (cartQuestions.length === 0) {
         showToast("Please add at least 1 question to your cart first.", "warning");
         return;
     }
@@ -2520,15 +3779,21 @@ function openExamSetupModal() {
 
     const setupModal = document.getElementById('exam-setup-modal');
     const titleInput = document.getElementById('setup-exam-title');
+    const instInput = document.getElementById('setup-exam-institute');
+    const classInput = document.getElementById('setup-exam-class');
     const subjInput = document.getElementById('setup-exam-subject');
     const durationInput = document.getElementById('setup-exam-duration');
     const deadlineInput = document.getElementById('setup-exam-deadline');
     const instructionsInput = document.getElementById('setup-exam-instructions');
 
-    // Pre-populate Title
+    // Pre-populate Title, School Header, Class, Subject
     const paperTitleVal = document.getElementById('paper-title-input')?.value.trim();
-    const subjects = state.cart.map(q => q.subject).filter(Boolean);
+    const subjects = cartQuestions.map(q => q.subject).filter(Boolean);
+    const classes = cartQuestions.map(q => q.class_level).filter(Boolean);
     const mostFreqSubject = subjects.length ? subjects[0] : "";
+    const firstClass = classes.length ? classes[0] : "";
+    if (instInput) instInput.value = state.paperHeader?.institute_name || "The Squire's Way";
+    if (classInput) classInput.value = firstClass;
     titleInput.value = paperTitleVal || (mostFreqSubject ? `${mostFreqSubject} Examination 2026` : "General Digital Examination");
     subjInput.value = mostFreqSubject || "General";
     durationInput.value = 60;
@@ -2537,15 +3802,21 @@ function openExamSetupModal() {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(23, 59, 0, 0);
-    const yyyy = tomorrow.getFullYear();
-    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
-    const dd = String(tomorrow.getDate()).padStart(2, '0');
-    const hh = String(tomorrow.getHours()).padStart(2, '0');
-    const min = String(tomorrow.getMinutes()).padStart(2, '0');
-    deadlineInput.value = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    deadlineInput.value = toLocalDatetimeInputValue(tomorrow);
 
-    if (!instructionsInput.value.trim()) {
-        instructionsInput.value = "1. Answer all questions.\n2. You can type answers or upload clear photos of your handwritten sheets.\n3. Verify your answers before submitting. Submission is final.";
+    const defaultInstructions = "1. Answer all questions.\n2. You can type answers or upload clear photos of your handwritten sheets.\n3. Verify your answers before submitting. Submission is final.";
+    if (instructionsInput) {
+        instructionsInput.value = (state.paperHeader?.instructions || '').trim() || defaultInstructions;
+    }
+
+    // Automatically select Custom Marks mode if Cart questions carry per-question marks
+    const hasCustomMarks = cartQuestions.some(q => q.marks != null && q.marks !== '');
+    const customRadio = document.getElementById('marks-mode-custom');
+    const equalRadio = document.getElementById('marks-mode-equal');
+    if (hasCustomMarks && customRadio) {
+        customRadio.checked = true;
+    } else if (equalRadio) {
+        equalRadio.checked = true;
     }
 
     renderSetupMarksAllocation();
@@ -2553,6 +3824,7 @@ function openExamSetupModal() {
 }
 
 function renderSetupMarksAllocation() {
+    const cartQuestions = getStructuredCartQuestions();
     const isCustom = document.getElementById('marks-mode-custom')?.checked;
     const equalContainer = document.getElementById('equal-marks-container');
     const customContainer = document.getElementById('custom-marks-container');
@@ -2563,16 +3835,18 @@ function renderSetupMarksAllocation() {
         equalContainer?.classList.add('hidden');
         customContainer?.classList.remove('hidden');
 
-        customContainer.innerHTML = state.cart.map((q, idx) => `
+        customContainer.innerHTML = cartQuestions.map((q, idx) => {
+            const prefill = q.marks != null && !isNaN(parseFloat(q.marks)) ? parseFloat(q.marks) : 5;
+            return `
             <div class="flex items-center justify-between text-xs p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                 <span class="font-bold text-slate-500 mr-2 shrink-0">Q${idx + 1}</span>
-                <p class="text-slate-800 dark:text-slate-200 truncate flex-1 mr-3">${escapeHtml(q.question_text)}</p>
+                <p class="text-slate-800 dark:text-slate-200 truncate flex-1 mr-3">${q.section_title ? `<span class="text-brand-600 font-bold">[${escapeHtml(q.section_title)}]</span> ` : ''}${escapeHtml(q.question_text)}</p>
                 <div class="flex items-center space-x-1 shrink-0">
-                    <input type="number" min="0.5" step="0.5" value="5" data-idx="${idx}" class="setup-custom-mark-input w-16 text-center text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold">
+                    <input type="number" min="0.5" step="0.5" value="${prefill}" data-idx="${idx}" class="setup-custom-mark-input w-16 text-center text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold">
                     <span class="text-slate-400">pts</span>
                 </div>
             </div>
-        `).join('');
+        `;}).join('');
 
         updateCustomTotalMarks();
         customContainer.querySelectorAll('.setup-custom-mark-input').forEach(input => {
@@ -2582,7 +3856,7 @@ function renderSetupMarksAllocation() {
         customContainer?.classList.add('hidden');
         equalContainer?.classList.remove('hidden');
         const eqVal = parseFloat(equalValInput?.value || 5.0);
-        const total = state.cart.length * eqVal;
+        const total = cartQuestions.length * eqVal;
         if (totalMarksLabel) totalMarksLabel.textContent = total;
     }
 }
@@ -2601,7 +3875,10 @@ function updateCustomTotalMarks() {
 async function handlePublishExam(e) {
     if (e) e.preventDefault();
 
+    const cartQuestions = getStructuredCartQuestions();
     const titleInput = document.getElementById('setup-exam-title');
+    const instInput = document.getElementById('setup-exam-institute');
+    const classInput = document.getElementById('setup-exam-class');
     const subjInput = document.getElementById('setup-exam-subject');
     const durationInput = document.getElementById('setup-exam-duration');
     const deadlineInput = document.getElementById('setup-exam-deadline');
@@ -2611,6 +3888,8 @@ async function handlePublishExam(e) {
     const publishBtn = document.getElementById('btn-publish-exam-submit');
 
     const title = titleInput.value.trim();
+    const instituteName = instInput ? (instInput.value.trim() || "The Squire's Way") : "The Squire's Way";
+    const classLevel = classInput ? classInput.value.trim() : '';
     const subject = subjInput.value.trim();
     const duration = parseInt(durationInput.value) || 60;
     const deadline = deadlineInput.value;
@@ -2626,17 +3905,18 @@ async function handlePublishExam(e) {
     }
 
     const eqVal = parseFloat(equalValInput?.value || 5.0);
-    const questionsPayload = state.cart.map((q, idx) => {
+    const questionsPayload = cartQuestions.map((q, idx) => {
         let marks = eqVal;
         if (isCustom) {
             const customInp = document.querySelector(`.setup-custom-mark-input[data-idx="${idx}"]`);
             marks = customInp ? parseFloat(customInp.value || 0) : eqVal;
         }
         return {
-            question_id: q.id,
+            question_id: q.id || null,
             question_text: q.question_text,
             marks: marks,
-            question_order: idx + 1
+            question_order: idx + 1,
+            section_title: q.section_title || null
         };
     });
 
@@ -2652,6 +3932,8 @@ async function handlePublishExam(e) {
             body: JSON.stringify({
                 title: title,
                 subject: subject,
+                class_level: classLevel,
+                institute_name: instituteName,
                 duration_minutes: duration,
                 deadline: new Date(deadline).toISOString(),
                 instructions: instructions,
@@ -2819,6 +4101,8 @@ function renderExamsList(exams) {
     const container = document.getElementById('exams-table-container');
     if (!container) return;
 
+    const isAdmin = state.currentUser && state.currentUser.role === 'admin';
+
     if (!exams || exams.length === 0) {
         container.innerHTML = `
             <div class="p-12 text-center text-slate-400 dark:text-slate-500">
@@ -2836,8 +4120,8 @@ function renderExamsList(exams) {
                 <tr>
                     <th class="py-3 px-4">Code</th>
                     <th class="py-3 px-4">Exam Info</th>
-                    <th class="py-3 px-4">Duration & Deadline</th>
-                    <th class="py-3 px-4">Questions & Marks</th>
+                    <th class="py-3 px-4">Duration &amp; Deadline</th>
+                    <th class="py-3 px-4">Questions &amp; Marks</th>
                     <th class="py-3 px-4">Submissions</th>
                     <th class="py-3 px-4">Status</th>
                     <th class="py-3 px-4 text-right">Actions</th>
@@ -2849,7 +4133,7 @@ function renderExamsList(exams) {
                     const deadlineDate = new Date(e.deadline);
                     const isExpired = new Date() > deadlineDate;
                     const origin = window.location.origin;
-                    const examUrl = `${origin}/exam/${e.exam_code}`;
+                    const examUrl = `${origin}/exam/${encodeURIComponent(e.exam_code)}`;
 
                     return `
                         <tr class="hover:bg-slate-50/75 dark:hover:bg-slate-700/30 transition-colors">
@@ -2860,7 +4144,7 @@ function renderExamsList(exams) {
                             </td>
                             <td class="py-3.5 px-4">
                                 <p class="font-bold text-slate-900 dark:text-white">${escapeHtml(e.title)}</p>
-                                <p class="text-[11px] text-slate-400 dark:text-slate-400">${escapeHtml(e.subject || 'General')}</p>
+                                <p class="text-[11px] text-slate-400 dark:text-slate-400">${e.class_level ? `${escapeHtml(e.class_level)} • ` : ''}${escapeHtml(e.subject || 'General')}</p>
                             </td>
                             <td class="py-3.5 px-4">
                                 <p class="font-medium text-slate-700 dark:text-slate-300">⏱ ${e.duration_minutes} min</p>
@@ -2873,7 +4157,7 @@ function renderExamsList(exams) {
                                 <span class="text-slate-400">• ${e.total_marks} pts</span>
                             </td>
                             <td class="py-3.5 px-4">
-                                <button onclick="openExamSubmissions(${e.id})" class="inline-flex items-center space-x-1 font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline cursor-pointer">
+                                <button type="button" data-exam-action="submissions" data-exam-id="${e.id}" class="inline-flex items-center space-x-1 font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline cursor-pointer">
                                     <span>${e.submissions_count || 0} Submissions</span>
                                     ${e.pending_count > 0 
                                         ? `<span class="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] rounded-full font-bold">${(e.submissions_count || 0) - e.pending_count}/${e.submissions_count || 0} Graded (${e.pending_count} pending)</span>` 
@@ -2881,7 +4165,7 @@ function renderExamsList(exams) {
                                 </button>
                             </td>
                             <td class="py-3.5 px-4">
-                                <button onclick="toggleExamStatus(${e.id})" class="px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider transition cursor-pointer ${
+                                <button type="button" data-exam-action="toggle-status" data-exam-id="${e.id}" class="px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider transition cursor-pointer ${
                                     isClosed 
                                         ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300'
                                         : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200'
@@ -2889,19 +4173,27 @@ function renderExamsList(exams) {
                                     ${isClosed ? 'Closed' : 'Active'}
                                 </button>
                             </td>
-                            <td class="py-3.5 px-4 text-right space-x-1.5 shrink-0">
-                                <button onclick="openExamSubmissions(${e.id})" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="View Submissions & Grade">
+                            <td class="py-3.5 px-4 text-right space-x-1 shrink-0 whitespace-nowrap">
+                                <button type="button" data-exam-action="submissions" data-exam-id="${e.id}" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="View Submissions &amp; Grade">
                                     📋 Grade
                                 </button>
-                                <button onclick="copyExamLink('${escapeHtml(examUrl)}')" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Copy Student Room Link">
+                                <button type="button" data-exam-action="clone" data-exam-id="${e.id}" class="px-2.5 py-1.5 rounded-lg border border-brand-200 dark:border-brand-800/70 bg-brand-50/60 dark:bg-brand-950/40 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-brand-700 dark:text-brand-300 font-semibold transition cursor-pointer" title="Clone Exam questions &amp; marks into Cart">
+                                    📄 Clone → Cart
+                                </button>
+                                <button type="button" data-exam-action="extend" data-exam-id="${e.id}" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Extend Deadline">
+                                    ⏱️ Extend
+                                </button>
+                                <button type="button" data-exam-action="copy-link" data-exam-id="${e.id}" data-exam-url="${escapeHtml(examUrl)}" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Copy Student Room Link">
                                     🔗 Link
                                 </button>
-                                <button onclick="openExamQrModal('${escapeHtml(e.exam_code)}', '${escapeHtml(e.title)}')" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Show QR Code">
+                                <button type="button" data-exam-action="show-qr" data-exam-id="${e.id}" data-exam-code="${escapeHtml(e.exam_code)}" data-exam-title="${escapeHtml(e.title)}" class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold transition cursor-pointer" title="Show QR Code">
                                     📱 QR
                                 </button>
-                                <button onclick="deleteExam(${e.id})" class="px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-semibold transition cursor-pointer" title="Delete Exam">
+                                ${isAdmin ? `
+                                <button type="button" data-exam-action="delete" data-exam-id="${e.id}" class="px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-semibold transition cursor-pointer" title="Delete Exam (Admin Only)">
                                     🗑️
                                 </button>
+                                ` : ''}
                             </td>
                         </tr>
                     `;
@@ -2909,6 +4201,147 @@ function renderExamsList(exams) {
             </tbody>
         </table>
     `;
+}
+
+window.cloneExamToCart = async function(examId) {
+    try {
+        const res = await apiFetch(`/api/exams/${examId}/detail`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to load exam details');
+        }
+        const exam = await res.json();
+        const qs = exam.questions || [];
+        if (qs.length === 0) {
+            showToast("This exam has no questions to clone.", "warning");
+            return;
+        }
+        if (state.cart.length > 0 && !confirm(`Replace your current Question Cart (${getCartQuestions().length} items) with "${exam.title}"?`)) {
+            return;
+        }
+
+        const clonedCart = [];
+        let lastSection = null;
+        qs.forEach(q => {
+            const sec = (q.section_title || '').trim() || null;
+            if (sec && sec !== lastSection) {
+                clonedCart.push({ item_type: 'section', section_title: sec });
+                lastSection = sec;
+            }
+            clonedCart.push({
+                item_type: 'question',
+                id: q.question_id != null ? q.question_id : null,
+                question_text: q.question_text,
+                class_level: exam.class_level || '',
+                subject: exam.subject || '',
+                topic: '',
+                marks: q.marks != null ? q.marks : null
+            });
+        });
+
+        state.cart = clonedCart;
+        state.expandedCartItems?.clear();
+        if (paperTitleInput) {
+            paperTitleInput.value = `${exam.title} (Copy)`;
+            localStorage.setItem('qb_paper_title', paperTitleInput.value);
+        }
+        if (cartHeaderInstitute) {
+            cartHeaderInstitute.value = exam.institute_name || "The Squire's Way";
+            state.paperHeader.institute_name = cartHeaderInstitute.value;
+        }
+        if (cartHeaderClassSubject) {
+            const clsSubj = [exam.class_level, exam.subject].filter(Boolean).join(' — ');
+            cartHeaderClassSubject.value = clsSubj;
+            state.paperHeader.class_subject = clsSubj;
+        }
+        if (cartHeaderTime) {
+            cartHeaderTime.value = exam.duration_minutes ? `${exam.duration_minutes} Minutes` : '';
+            state.paperHeader.time_allowed = cartHeaderTime.value;
+        }
+        if (cartHeaderMaxMarks) {
+            cartHeaderMaxMarks.value = '';
+        }
+        state.paperHeader.max_marks = '';
+        if (cartHeaderInstructions) {
+            cartHeaderInstructions.value = exam.instructions || '';
+            state.paperHeader.instructions = cartHeaderInstructions.value;
+        }
+        try {
+            localStorage.setItem('qb_paper_header', JSON.stringify(state.paperHeader));
+        } catch (err) {}
+
+        saveCart();
+        if (state.currentQuestions && state.currentQuestions.length > 0) {
+            reRenderCurrentQuestions();
+        }
+        window.location.hash = '#bank';
+        setTimeout(() => {
+            openCart();
+            triggerHaptic('success');
+            showToast(`Cloned ${qs.length} questions from "${exam.title}" into Cart!`, "success");
+        }, 100);
+    } catch (err) {
+        showToast("Clone error: " + err.message, "error");
+    }
+};
+
+window.openExtendDeadlineModal = function(examId) {
+    const exam = examsState.currentExams.find(e => e.id === examId);
+    const modal = document.getElementById('extend-deadline-modal');
+    if (!modal || !exam) return;
+
+    document.getElementById('extend-deadline-exam-id').value = examId;
+    const nameEl = document.getElementById('extend-deadline-exam-name');
+    if (nameEl) nameEl.textContent = `${exam.title} (${exam.exam_code})`;
+
+    const dlInput = document.getElementById('extend-deadline-input');
+    const durInput = document.getElementById('extend-duration-input');
+    const reopenCb = document.getElementById('extend-reopen-cb');
+
+    const baseDate = new Date(exam.deadline);
+    const targetDate = (!isNaN(baseDate.getTime()) && baseDate > new Date())
+        ? baseDate
+        : new Date(Date.now() + 24 * 3600 * 1000);
+    if (dlInput) dlInput.value = toLocalDatetimeInputValue(targetDate);
+    if (durInput) durInput.value = exam.duration_minutes || 60;
+    if (reopenCb) reopenCb.checked = true;
+
+    modal.classList.remove('hidden');
+};
+
+function closeExtendDeadlineModal() {
+    document.getElementById('extend-deadline-modal')?.classList.add('hidden');
+}
+
+async function handleExtendDeadlineSubmit(e) {
+    e.preventDefault();
+    const examId = document.getElementById('extend-deadline-exam-id')?.value;
+    const dlVal = document.getElementById('extend-deadline-input')?.value;
+    const durVal = document.getElementById('extend-duration-input')?.value;
+    const reopen = document.getElementById('extend-reopen-cb')?.checked ?? true;
+    if (!examId || !dlVal) return;
+
+    try {
+        const res = await apiFetch(`/api/exams/${examId}/deadline`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                deadline: new Date(dlVal).toISOString(),
+                reopen_if_closed: reopen,
+                duration_minutes: durVal ? parseInt(durVal, 10) : null
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to extend deadline');
+        }
+        closeExtendDeadlineModal();
+        triggerHaptic('success');
+        showToast("Exam deadline updated successfully! ⏱️", "success");
+        await loadExamsList();
+    } catch (err) {
+        showToast("Error: " + err.message, "error");
+    }
 }
 
 window.copyExamLink = function(url) {
@@ -2936,7 +4369,10 @@ window.deleteExam = async function(examId) {
 
     try {
         const res = await apiFetch(`/api/exams/${examId}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Failed to delete exam');
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to delete exam');
+        }
         showToast("Exam deleted successfully.", "info");
         loadExamsList();
     } catch (err) {
@@ -2949,8 +4385,56 @@ window.openExamSubmissions = function(examId) {
     window.location.hash = `#exams/submissions/${examId}`;
 };
 
+function renderSubmissionsClassStats(stats, submissions) {
+    const totalEl = document.getElementById('sub-stat-total');
+    const pendingEl = document.getElementById('sub-stat-pending');
+    const avgEl = document.getElementById('sub-stat-avg');
+    const highEl = document.getElementById('sub-stat-highest');
+    const passEl = document.getElementById('sub-stat-pass');
+
+    if (stats) {
+        if (totalEl) totalEl.textContent = stats.total_submissions ?? (submissions?.length || 0);
+        if (pendingEl) pendingEl.textContent = stats.pending_count ?? 0;
+        if (avgEl) avgEl.textContent = stats.graded_count > 0 ? `${stats.average_score} (${stats.average_percentage}%)` : '—';
+        if (highEl) highEl.textContent = stats.graded_count > 0 ? `${stats.highest_score}` : '—';
+        if (passEl) passEl.textContent = stats.graded_count > 0 ? `${stats.pass_rate}%` : '—';
+    }
+}
+
+function applySubmissionsFilter() {
+    const q = (examsState.subSearchQuery || '').trim().toLowerCase();
+    const statusFilter = examsState.subStatusFilter || 'all';
+    const allSubs = examsState.activeSubmissions || [];
+
+    const filtered = allSubs.filter(s => {
+        if (statusFilter === 'pending' && s.status === 'graded') return false;
+        if (statusFilter === 'graded' && s.status !== 'graded') return false;
+        if (q) {
+            const hay = `${s.student_name || ''} ${s.roll_number || ''} ${s.section || ''}`.toLowerCase();
+            if (!hay.includes(q)) return false;
+        }
+        return true;
+    });
+
+    examsState.filteredSubmissions = filtered;
+    renderSubmissionsTable(filtered, examsState.activeExam || {});
+}
+
 async function loadSubmissionsList(examId) {
+    const isNewExam = examsState.activeExamId !== examId;
     examsState.activeExamId = examId;
+    if (isNewExam) {
+        examsState.subSearchQuery = '';
+        examsState.subStatusFilter = 'all';
+        const subSearchInput = document.getElementById('sub-search-input');
+        if (subSearchInput) subSearchInput.value = '';
+        document.querySelectorAll('.sub-filter-btn').forEach(b => {
+            const isAll = (b.getAttribute('data-sub-filter') || 'all') === 'all';
+            b.className = isAll
+                ? "sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs cursor-pointer"
+                : "sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer";
+        });
+    }
     const container = document.getElementById('submissions-table-container');
     if (!container) return;
 
@@ -2962,7 +4446,9 @@ async function loadSubmissionsList(examId) {
 
         const data = await res.json();
         const exam = data.exam;
+        examsState.activeExam = exam;
         examsState.activeSubmissions = data.submissions || [];
+        examsState.activeStats = data.stats || null;
 
         // Update header metadata
         const codeBadge = document.getElementById('sub-view-code-badge');
@@ -2971,9 +4457,10 @@ async function loadSubmissionsList(examId) {
 
         if (codeBadge) codeBadge.textContent = exam.exam_code;
         if (titleEl) titleEl.textContent = exam.title;
-        if (metaEl) metaEl.textContent = `${exam.subject || 'General'} • Total Marks: ${exam.total_marks} • Duration: ${exam.duration_minutes} min`;
+        if (metaEl) metaEl.textContent = `${exam.class_level ? `${exam.class_level} • ` : ''}${exam.subject || 'General'} • Total Marks: ${exam.total_marks} • Duration: ${exam.duration_minutes} min`;
 
-        renderSubmissionsTable(examsState.activeSubmissions, exam);
+        renderSubmissionsClassStats(data.stats, examsState.activeSubmissions);
+        applySubmissionsFilter();
     } catch (err) {
         container.innerHTML = `
             <div class="p-8 text-center text-rose-500 text-xs font-medium">
@@ -2983,16 +4470,47 @@ async function loadSubmissionsList(examId) {
     }
 }
 
+async function exportMarksheetCsv() {
+    if (!examsState.activeExamId) return;
+    const btn = document.getElementById('btn-export-marksheet-csv');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await apiFetch(`/api/exams/${examsState.activeExamId}/marksheet.csv`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to export marksheet CSV');
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        const code = examsState.activeExam?.exam_code || `exam_${examsState.activeExamId}`;
+        a.download = `${code}_marksheet.csv`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        triggerHaptic('success');
+        showToast("Marksheet CSV exported! 📊", "success");
+    } catch (err) {
+        showToast("Marksheet export error: " + err.message, "error");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 function renderSubmissionsTable(submissions, exam) {
     const container = document.getElementById('submissions-table-container');
     if (!container) return;
 
     if (!submissions || submissions.length === 0) {
+        const hasTotal = (examsState.activeSubmissions || []).length > 0;
         container.innerHTML = `
             <div class="p-12 text-center text-slate-400 dark:text-slate-500">
-                <span class="text-3xl block mb-2">📥</span>
-                <p class="text-sm font-semibold">No student submissions yet</p>
-                <p class="text-xs mt-1">Share the exam link or QR code with your students to start receiving submissions.</p>
+                <span class="text-3xl block mb-2">${hasTotal ? '🔍' : '📥'}</span>
+                <p class="text-sm font-semibold">${hasTotal ? 'No submissions match your search/filter' : 'No student submissions yet'}</p>
+                <p class="text-xs mt-1">${hasTotal ? 'Try clearing the search box or switching status filter.' : 'Share the exam link or QR code with your students to start receiving submissions.'}</p>
             </div>
         `;
         return;
@@ -3005,7 +4523,7 @@ function renderSubmissionsTable(submissions, exam) {
                     <th class="py-3 px-4">Roll Number</th>
                     <th class="py-3 px-4">Student Name</th>
                     <th class="py-3 px-4">Section</th>
-                    <th class="py-3 px-4">Submitted At & Time Taken</th>
+                    <th class="py-3 px-4">Submitted At &amp; Time Taken</th>
                     <th class="py-3 px-4">Evaluation Status</th>
                     <th class="py-3 px-4">Total Score</th>
                     <th class="py-3 px-4 text-right">Actions</th>
@@ -3077,11 +4595,46 @@ function renderSubmissionsTable(submissions, exam) {
 }
 
 // 7. Grading Workspace Modal Logic
+function getGradingQueueList() {
+    if (examsState.filteredSubmissions && examsState.filteredSubmissions.length > 0) {
+        return examsState.filteredSubmissions;
+    }
+    return examsState.activeSubmissions || [];
+}
+
+function updateGradingNavUI(submissionId) {
+    const queue = getGradingQueueList();
+    const idx = queue.findIndex(s => s.id === submissionId);
+    const posBadge = document.getElementById('grade-position-badge');
+    const prevBtn = document.getElementById('btn-grade-prev');
+    const nextBtn = document.getElementById('btn-grade-next');
+    if (posBadge) {
+        posBadge.textContent = idx >= 0 ? `${idx + 1} / ${queue.length}` : `— / ${queue.length}`;
+    }
+    if (prevBtn) prevBtn.disabled = idx <= 0;
+    if (nextBtn) nextBtn.disabled = idx < 0 || idx >= queue.length - 1;
+}
+
+function navigateGradingSubmission(delta) {
+    if (!examsState.activeSubmissionDetail) return;
+    if (examsState.isGradingDirty) {
+        if (!confirm("You have unsaved changes for this student. Discard and move to another student?")) return;
+    }
+    const queue = getGradingQueueList();
+    const curId = examsState.activeSubmissionDetail.id;
+    const idx = queue.findIndex(s => s.id === curId);
+    const target = queue[idx + delta];
+    if (target) {
+        openGradingStudio(target.id);
+    }
+}
+
 window.openGradingStudio = async function(submissionId) {
     const modal = document.getElementById('grading-workspace-modal');
     const container = document.getElementById('grading-questions-container');
     if (!modal || !container) return;
 
+    updateGradingNavUI(submissionId);
     container.innerHTML = `
         <div class="p-12 text-center text-slate-400">
             <span class="inline-block animate-spin text-3xl mb-2">⏳</span>
@@ -3114,6 +4667,7 @@ window.openGradingStudio = async function(submissionId) {
         document.getElementById('grade-max-score').textContent = sub.total_marks;
         document.getElementById('grade-overall-feedback').value = sub.feedback || '';
 
+        updateGradingNavUI(sub.id);
         renderGradingQuestions(sub.answers);
         updateLiveAwardedScore();
     } catch (err) {
@@ -3147,6 +4701,7 @@ function renderGradingQuestions(answers) {
                             ${ans.question_order || idx + 1}
                         </span>
                         <div>
+                            ${ans.section_title ? `<span class="inline-block mb-1 px-2 py-0.5 rounded-md bg-brand-50 dark:bg-brand-950/50 text-brand-700 dark:text-brand-300 border border-brand-200/60 dark:border-brand-800/60 text-[10px] font-bold uppercase tracking-wider">${escapeHtml(ans.section_title)}</span>` : ''}
                             <p class="text-sm font-semibold text-slate-900 dark:text-white leading-relaxed">
                                 ${escapeHtml(ans.question_text)}
                             </p>
@@ -3172,11 +4727,11 @@ function renderGradingQuestions(answers) {
                         <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Handwritten Photo Sheet:</span>
                         ${hasImage ? `
                             <div class="relative group border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-950 flex items-center justify-center h-[90px]">
-                                <img src="${ans.image_data}" alt="Answer Sheet Photo" class="object-cover w-full h-full">
+                                <img src="${escapeHtml(ans.image_data)}" alt="Answer Sheet Photo" class="object-cover w-full h-full">
                                 <div class="absolute inset-0 bg-slate-950/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <button type="button" onclick="openPhotoZoomModal('${ans.image_data}', 'Question ${ans.question_order || idx + 1}')" class="px-3 py-1.5 rounded-lg bg-white/90 dark:bg-slate-900/90 text-xs font-bold text-slate-900 dark:text-white shadow-md hover:scale-105 transition cursor-pointer flex items-center space-x-1">
+                                    <button type="button" data-grade-action="zoom-photo" data-q-id="${ans.question_id}" data-photo-title="${escapeHtml('Question ' + (ans.question_order || idx + 1))}" class="px-3 py-1.5 rounded-lg bg-white/90 dark:bg-slate-900/90 text-xs font-bold text-slate-900 dark:text-white shadow-md hover:scale-105 transition cursor-pointer flex items-center space-x-1">
                                         <span>🔍</span>
-                                        <span>Zoom & Inspect</span>
+                                        <span>Zoom &amp; Inspect</span>
                                     </button>
                                 </div>
                             </div>
@@ -3189,27 +4744,34 @@ function renderGradingQuestions(answers) {
                 </div>
 
                 <!-- Teacher Marks & Feedback Inputs -->
-                <div class="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/60 dark:bg-slate-950/30 -mx-5 -mb-5 p-4 rounded-b-2xl">
-                    <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
-                        <label class="text-xs font-bold text-slate-700 dark:text-slate-300">Awarded Marks:</label>
-                        <input type="number" min="0" max="${ans.max_marks}" step="0.5" value="${defaultMarks}" data-max="${ans.max_marks}" class="grade-marks-input w-20 text-center font-bold text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 text-sm">
-                        <span class="text-xs text-slate-400">/ ${ans.max_marks} pts</span>
+                <div class="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2.5 bg-slate-50/60 dark:bg-slate-950/30 -mx-5 -mb-5 p-4 rounded-b-2xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
+                            <label class="text-xs font-bold text-slate-700 dark:text-slate-300">Awarded Marks:</label>
+                            <input type="number" min="0" max="${ans.max_marks}" step="0.5" value="${defaultMarks}" data-max="${ans.max_marks}" class="grade-marks-input w-20 text-center font-bold text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 text-sm">
+                            <span class="text-xs text-slate-400">/ ${ans.max_marks} pts</span>
 
-                        <!-- Quick-Grade Shortcuts -->
-                        <div class="flex items-center space-x-1 pl-1">
-                            <button type="button" onclick="setQuickGrade(this, ${ans.max_marks})" class="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 border border-emerald-200 dark:border-emerald-800 transition cursor-pointer" title="Award full marks">
-                                Full [${ans.max_marks}]
-                            </button>
-                            <button type="button" onclick="setQuickGrade(this, ${ans.max_marks / 2})" class="px-2 py-1 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/80 border border-amber-200 dark:border-amber-800 transition cursor-pointer" title="Award half marks">
-                                Half [${ans.max_marks / 2}]
-                            </button>
-                            <button type="button" onclick="setQuickGrade(this, 0)" class="px-2 py-1 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/80 border border-rose-200 dark:border-rose-800 transition cursor-pointer" title="Award zero marks">
-                                Zero [0]
-                            </button>
+                            <!-- Quick-Grade Shortcuts -->
+                            <div class="flex items-center space-x-1 pl-1">
+                                <button type="button" data-grade-action="quick-grade" data-marks="${ans.max_marks}" class="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 border border-emerald-200 dark:border-emerald-800 transition cursor-pointer" title="Award full marks">
+                                    Full [${ans.max_marks}]
+                                </button>
+                                <button type="button" data-grade-action="quick-grade" data-marks="${ans.max_marks / 2}" class="px-2 py-1 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/80 border border-amber-200 dark:border-amber-800 transition cursor-pointer" title="Award half marks">
+                                    Half [${ans.max_marks / 2}]
+                                </button>
+                                <button type="button" data-grade-action="quick-grade" data-marks="0" class="px-2 py-1 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/80 border border-rose-200 dark:border-rose-800 transition cursor-pointer" title="Award zero marks">
+                                    Zero [0]
+                                </button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="flex-1 max-w-md">
-                        <input type="text" placeholder="Question-specific feedback / note..." value="${escapeHtml(ans.feedback || '')}" class="grade-feedback-input w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                        <div class="flex-1 max-w-md space-y-1">
+                            <input type="text" placeholder="Question-specific feedback / note..." value="${escapeHtml(ans.feedback || '')}" class="grade-feedback-input w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+                            <div class="flex flex-wrap gap-1">
+                                ${['Correct ✓', 'Well explained', 'Key point missing', 'Check spelling/grammar', 'Incomplete'].map(chip => `
+                                    <button type="button" data-grade-action="feedback-chip" data-chip="${escapeHtml(chip)}" class="px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-[10px] font-medium text-slate-600 dark:text-slate-300 cursor-pointer">+ ${escapeHtml(chip)}</button>
+                                `).join('')}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3234,6 +4796,17 @@ function renderGradingQuestions(answers) {
         });
     });
 }
+
+window.appendQuestionFeedback = function(btn, text) {
+    const card = btn.closest('[data-q-id]');
+    if (!card) return;
+    const inp = card.querySelector('.grade-feedback-input');
+    if (!inp) return;
+    const cur = inp.value.trim();
+    inp.value = cur ? `${cur}; ${text}` : text;
+    examsState.isGradingDirty = true;
+    triggerHaptic('light');
+};
 
 window.setQuickGrade = function(btn, marks) {
     const card = btn.closest('[data-q-id]');
@@ -3266,7 +4839,7 @@ function updateLiveAwardedScore() {
     if (label) label.textContent = total;
 }
 
-async function handlePublishEvaluation() {
+async function handlePublishEvaluation(advanceNextPending = false) {
     if (!examsState.activeSubmissionDetail) return;
     const subId = examsState.activeSubmissionDetail.id;
     const overallFeedback = document.getElementById('grade-overall-feedback')?.value.trim() || '';
@@ -3285,8 +4858,11 @@ async function handlePublishEvaluation() {
     });
 
     const publishBtn = document.getElementById('btn-publish-evaluation');
-    publishBtn.disabled = true;
-    publishBtn.innerHTML = `<span>Publishing... ⏳</span>`;
+    const publishNextBtn = document.getElementById('btn-publish-and-next');
+    if (publishBtn) publishBtn.disabled = true;
+    if (publishNextBtn) publishNextBtn.disabled = true;
+    if (publishNextBtn && advanceNextPending) publishNextBtn.innerHTML = `<span>Saving &amp; Loading Next... ⏳</span>`;
+    else if (publishBtn) publishBtn.innerHTML = `<span>Publishing... ⏳</span>`;
 
     try {
         const res = await apiFetch(`/api/submissions/${subId}/grade`, {
@@ -3305,19 +4881,41 @@ async function handlePublishEvaluation() {
         }
 
         examsState.isGradingDirty = false;
-        document.getElementById('grading-workspace-modal')?.classList.add('hidden');
         triggerHaptic('success');
-        showToast("Student grades published successfully! 🎉", "success");
+        showToast("Student grades published! 🎉", "success", 2200);
 
-        // Refresh submissions table
         if (examsState.activeExamId) {
-            loadSubmissionsList(examsState.activeExamId);
+            await loadSubmissionsList(examsState.activeExamId);
+        }
+
+        if (advanceNextPending) {
+            const pool = (examsState.filteredSubmissions && examsState.filteredSubmissions.length > 0)
+                ? examsState.filteredSubmissions
+                : (examsState.activeSubmissions || []);
+            let nextPending = pool.find(s => s.status !== 'graded' && s.id !== subId);
+            if (!nextPending) {
+                nextPending = (examsState.activeSubmissions || []).find(s => s.status !== 'graded' && s.id !== subId);
+            }
+            if (nextPending) {
+                await openGradingStudio(nextPending.id);
+                return;
+            }
+            document.getElementById('grading-workspace-modal')?.classList.add('hidden');
+            showToast("All submissions in this exam are now graded! ✨", "success", 3500);
+        } else {
+            document.getElementById('grading-workspace-modal')?.classList.add('hidden');
         }
     } catch (err) {
         showToast("Error publishing evaluation: " + err.message, "error");
     } finally {
-        publishBtn.disabled = false;
-        publishBtn.innerHTML = `<span>Publish Evaluation & Marks 🚀</span>`;
+        if (publishBtn) {
+            publishBtn.disabled = false;
+            publishBtn.innerHTML = `<span>Publish &amp; Close</span>`;
+        }
+        if (publishNextBtn) {
+            publishNextBtn.disabled = false;
+            publishNextBtn.innerHTML = `<span>Publish &amp; Next Pending →</span>`;
+        }
     }
 }
 
@@ -3357,13 +4955,13 @@ window.openExamQrModal = function(examCode, title) {
     const examUrl = `${origin}/exam/${examCode}`;
 
     if (container) {
-        container.innerHTML = `<img src="/api/exams/${examCode}/qr" alt="QR Code" class="w-full h-full object-contain">`;
+        container.innerHTML = `<img src="/api/exams/${encodeURIComponent(examCode)}/qr" alt="QR Code" class="w-full h-full object-contain">`;
     }
 
     if (downloadBtn) {
         downloadBtn.onclick = async () => {
             try {
-                const res = await fetch(`/api/exams/${examCode}/qr`);
+                const res = await fetch(`/api/exams/${encodeURIComponent(examCode)}/qr`);
                 const svgText = await res.text();
                 const blob = new Blob([svgText], { type: 'image/svg+xml' });
                 const url = URL.createObjectURL(blob);
@@ -3396,7 +4994,7 @@ function initExamsStudio() {
 
     // Dashboard create exam button
     document.getElementById('btn-dashboard-create-exam')?.addEventListener('click', () => {
-        if (!state.cart || state.cart.length === 0) {
+        if (getCartQuestions().length === 0) {
             showToast("Your cart is empty. Add questions from the Question Bank first.", "info");
             window.location.hash = '#bank';
             return;
@@ -3404,10 +5002,32 @@ function initExamsStudio() {
         openExamSetupModal();
     });
 
-    // Refresh buttons
+    // Refresh & CSV Marksheet export buttons
     document.getElementById('btn-refresh-exams')?.addEventListener('click', loadExamsList);
     document.getElementById('btn-refresh-submissions')?.addEventListener('click', () => {
         if (examsState.activeExamId) loadSubmissionsList(examsState.activeExamId);
+    });
+    document.getElementById('btn-export-marksheet-csv')?.addEventListener('click', exportMarksheetCsv);
+
+    // Submissions search & status filter
+    const subSearchInput = document.getElementById('sub-search-input');
+    if (subSearchInput) {
+        subSearchInput.addEventListener('input', (e) => {
+            examsState.subSearchQuery = e.target.value;
+            applySubmissionsFilter();
+        });
+    }
+    document.querySelectorAll('.sub-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            examsState.subStatusFilter = btn.getAttribute('data-sub-filter') || 'all';
+            document.querySelectorAll('.sub-filter-btn').forEach(b => {
+                const isActive = b === btn;
+                b.className = isActive
+                    ? "sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs cursor-pointer"
+                    : "sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer";
+            });
+            applySubmissionsFilter();
+        });
     });
 
     // Emergency offline submission import (.squire)
@@ -3496,7 +5116,24 @@ function initExamsStudio() {
     // Grading modal events
     document.getElementById('close-grading-modal')?.addEventListener('click', safeCloseGradingStudio);
     document.getElementById('btn-cancel-grading')?.addEventListener('click', safeCloseGradingStudio);
-    document.getElementById('btn-publish-evaluation')?.addEventListener('click', handlePublishEvaluation);
+    document.getElementById('btn-grade-prev')?.addEventListener('click', () => navigateGradingSubmission(-1));
+    document.getElementById('btn-grade-next')?.addEventListener('click', () => navigateGradingSubmission(1));
+    document.getElementById('btn-publish-evaluation')?.addEventListener('click', () => handlePublishEvaluation(false));
+    document.getElementById('btn-publish-and-next')?.addEventListener('click', () => handlePublishEvaluation(true));
+    document.querySelectorAll('.grade-overall-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const inp = document.getElementById('grade-overall-feedback');
+            const chip = btn.getAttribute('data-chip') || '';
+            if (!inp || !chip) return;
+            const cur = inp.value.trim();
+            inp.value = cur ? `${cur} ${chip}` : chip;
+            examsState.isGradingDirty = true;
+            triggerHaptic('light');
+        });
+    });
+    document.getElementById('grade-overall-feedback')?.addEventListener('input', () => {
+        examsState.isGradingDirty = true;
+    });
 
     // Photo zoom modal events
     document.getElementById('close-photo-zoom-modal')?.addEventListener('click', () => {
@@ -3525,8 +5162,60 @@ function initExamsStudio() {
         document.getElementById('exam-qr-modal')?.classList.add('hidden');
     });
 
-    // Initial route check
-    handleHashRoute();
+    // Delegated click handler for Exams Dashboard table actions
+    const examsTableContainer = document.getElementById('exams-table-container');
+    if (examsTableContainer) {
+        examsTableContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-exam-action]');
+            if (!btn) return;
+            const action = btn.dataset.examAction;
+            const examId = parseInt(btn.dataset.examId || '0', 10);
+            const examObj = examsState.currentExams.find(ex => ex.id === examId);
+            if (action === 'submissions' && examId) {
+                window.openExamSubmissions(examId);
+            } else if (action === 'toggle-status' && examId) {
+                window.toggleExamStatus(examId);
+            } else if (action === 'clone' && examId) {
+                window.cloneExamToCart(examId);
+            } else if (action === 'extend' && examId) {
+                window.openExtendDeadlineModal(examId);
+            } else if (action === 'copy-link') {
+                const url = btn.dataset.examUrl || (examObj ? `${window.location.origin}/exam/${encodeURIComponent(examObj.exam_code)}` : '');
+                if (url) window.copyExamLink(url);
+            } else if (action === 'show-qr') {
+                const code = examObj?.exam_code || btn.dataset.examCode || '';
+                const title = examObj?.title || btn.dataset.examTitle || '';
+                if (code) window.openExamQrModal(code, title);
+            } else if (action === 'delete' && examId) {
+                window.deleteExam(examId);
+            }
+        });
+    }
+
+    // Delegated click handler for Grading Studio question actions
+    const gradingQuestionsContainer = document.getElementById('grading-questions-container');
+    if (gradingQuestionsContainer) {
+        gradingQuestionsContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-grade-action]');
+            if (!btn) return;
+            const action = btn.dataset.gradeAction;
+            if (action === 'zoom-photo') {
+                const qId = parseInt(btn.dataset.qId || btn.closest('[data-q-id]')?.getAttribute('data-q-id') || '0', 10);
+                const ans = (examsState.activeSubmissionDetail?.answers || []).find(a => a.question_id === qId);
+                const src = (ans && ans.image_data && ans.image_data.startsWith('data:image/'))
+                    ? ans.image_data
+                    : (btn.closest('.relative')?.querySelector('img')?.getAttribute('src') || '');
+                if (src && src.startsWith('data:image/')) {
+                    window.openPhotoZoomModal(src, btn.dataset.photoTitle || 'Handwritten Answer Sheet');
+                }
+            } else if (action === 'quick-grade') {
+                const marks = parseFloat(btn.dataset.marks || '0');
+                if (!isNaN(marks)) window.setQuickGrade(btn, marks);
+            } else if (action === 'feedback-chip') {
+                window.appendQuestionFeedback(btn, btn.dataset.chip || '');
+            }
+        });
+    }
 }
 
 // Automatically initialize exams studio when DOM is ready

@@ -192,3 +192,14 @@
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
 }
+
+/* Tabular numeric counters & collapsible details chevron */
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+}
+details > summary::-webkit-details-marker {
+    display: none;
+}
+details[open] .details-chevron {
+    transform: rotate(180deg);
+}

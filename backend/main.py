@@ -1,5 +1,7 @@
+import io
 import os
 import re
+import csv
 import json
 import secrets
 import asyncio
@@ -23,6 +25,10 @@ from backend.models import (
     QuestionCreate,
     QuestionUpdate,
     BulkDeleteRequest,
+    BulkUpdateQuestionsRequest,
+    MergeQuestionsRequest,
+    AutoPickRequest,
+    ConfirmImportRequest,
     ExportRequest,
     UploadSummary,
     UploadStatsResponse,
@@ -34,14 +40,16 @@ from backend.models import (
     ResetPasswordRequest,
     ExamCreateRequest,
     ExamQuestionInput,
+    ExamDeadlineUpdateRequest,
     StudentSubmissionRequest,
     StudentAnswerInput,
     QuestionGradeInput,
     GradeSubmissionRequest,
     EmergencySubmissionPayload
 )
-from backend.services.parser import extract_questions_from_file
+from backend.services.parser import extract_questions_from_file, extract_structured_questions_from_file
 from backend.services.dedup import clean_question_text, normalize_question_text
+from backend.services.curator import curate_question_library, infer_question_metadata
 from backend.services.exporter import generate_word_document, generate_pdf_document
 from backend.services.security import (
     auth_rate_limiter,
@@ -167,7 +175,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -453,47 +461,205 @@ def auth_verify(request: Request, payload: AuthVerifyRequest):
             )
         raise HTTPException(status_code=401, detail="Incorrect passcode. Please try again.")
 
-@app.post("/api/upload", response_model=UploadStatsResponse, dependencies=[Depends(verify_auth)])
-async def upload_files(
+def _validate_upload_files_sync_headers(filename: str, content: bytes, total_batch_size: int) -> int:
+    ext = filename.lower()
+    if not (ext.endswith(".docx") or ext.endswith(".pdf")):
+        raise HTTPException(status_code=400, detail=f"File '{filename}' is not a supported format (.docx or .pdf).")
+
+    file_size = len(content)
+    if file_size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File '{filename}' exceeds maximum allowed size of 20 MB ({file_size / (1024*1024):.1f} MB)."
+        )
+
+    new_batch_size = total_batch_size + file_size
+    if new_batch_size > MAX_BATCH_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload batch exceeds maximum allowed size of 50 MB ({new_batch_size / (1024*1024):.1f} MB)."
+        )
+
+    is_valid, err_msg = validate_file_magic_bytes(filename, content)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err_msg)
+    return new_batch_size
+
+
+@app.post("/api/upload/preview", dependencies=[Depends(verify_auth)])
+async def preview_upload_files(
     files: List[UploadFile] = File(...),
     subject: str = Form(""),
-    topic: str = Form("")
+    topic: str = Form(""),
+    class_level: str = Form("")
 ):
     """
-    Upload one or more .docx or .pdf files.
-    Enforces 20MB per-file and 50MB batch caps, validates magic-byte headers,
-    extracts questions, and performs exact-match deduplication.
+    Parses uploaded .docx/.pdf files using the Smart Sanitizer (extracting Lesson/Section context,
+    dropping dividers/footers/OR, normalizing quotes & OCR spaces) and returns a preview payload
+    showing duplicates vs new questions before saving.
     """
     total_batch_size = 0
     validated_files = []
 
-    # First pass: Validate file extensions, sizes, and magic bytes before parsing
     for file in files:
         filename = file.filename or "unknown_file"
-        ext = filename.lower()
-        if not (ext.endswith(".docx") or ext.endswith(".pdf")):
-            raise HTTPException(status_code=400, detail=f"File '{filename}' is not a supported format (.docx or .pdf).")
-
         content = await file.read()
-        file_size = len(content)
+        total_batch_size = _validate_upload_files_sync_headers(filename, content, total_batch_size)
+        validated_files.append((filename, content))
 
-        if file_size > MAX_FILE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File '{filename}' exceeds maximum allowed size of 20 MB ({file_size / (1024*1024):.1f} MB)."
+    preview_items = []
+    total_dropped = 0
+    temp_counter = 1
+
+    for filename, content in validated_files:
+        try:
+            structured_items, dropped_cnt = extract_structured_questions_from_file(
+                filename,
+                content,
+                default_subject=subject.strip(),
+                default_topic=topic.strip(),
+                default_class=class_level.strip(),
             )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed parsing file '{filename}': {str(e)}")
 
-        total_batch_size += file_size
-        if total_batch_size > MAX_BATCH_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Upload batch exceeds maximum allowed size of 50 MB ({total_batch_size / (1024*1024):.1f} MB)."
-            )
+        total_dropped += dropped_cnt
+        for it in structured_items:
+            preview_items.append({
+                "temp_id": temp_counter,
+                "source_filename": filename,
+                "include": True,
+                **it,
+            })
+            temp_counter += 1
 
-        is_valid, err_msg = validate_file_magic_bytes(filename, content)
-        if not is_valid:
-            raise HTTPException(status_code=400, detail=err_msg)
+    norms = [it["normalized_text"] for it in preview_items if it.get("normalized_text")]
+    existing_map = db.find_existing_normalized_map(norms)
 
+    # Also detect duplicates across multiple uploaded files in the same preview batch
+    seen_in_batch = set()
+    new_count = 0
+    dup_count = 0
+    review_count = 0
+
+    for it in preview_items:
+        nt = it.get("normalized_text", "")
+        existing = existing_map.get(nt)
+        if existing:
+            it["is_duplicate"] = True
+            it["existing_id"] = existing["id"]
+            it["existing_frequency"] = existing["frequency"]
+            dup_count += 1
+        elif nt in seen_in_batch:
+            it["is_duplicate"] = True
+            it["existing_id"] = None
+            it["existing_frequency"] = 1
+            dup_count += 1
+        else:
+            it["is_duplicate"] = False
+            it["existing_id"] = None
+            it["existing_frequency"] = 0
+            new_count += 1
+        if nt:
+            seen_in_batch.add(nt)
+        if it.get("needs_review"):
+            review_count += 1
+
+    return {
+        "total_files": len(files),
+        "total_extracted": len(preview_items),
+        "new_count": new_count,
+        "duplicate_count": dup_count,
+        "needs_review_count": review_count,
+        "dropped_dividers_count": total_dropped,
+        "items": preview_items,
+    }
+
+
+@app.post("/api/upload/confirm", response_model=UploadStatsResponse, dependencies=[Depends(verify_auth)])
+def confirm_upload_import(payload: ConfirmImportRequest):
+    """
+    Saves teacher-reviewed items from the Pre-Import Preview modal into the Question Library.
+    """
+    file_stats = {}
+    total_extracted = 0
+    total_new = 0
+    total_merged = 0
+
+    for item in payload.items:
+        if not item.include:
+            continue
+        clean_text = clean_question_text(item.question_text)
+        if not clean_text:
+            continue
+        norm_text = normalize_question_text(clean_text)
+        if not norm_text:
+            continue
+
+        src = (item.source_filename or "Uploaded File").strip()
+        if src not in file_stats:
+            file_stats[src] = {"extracted": 0, "new_added": 0, "duplicates_merged": 0}
+        file_stats[src]["extracted"] += 1
+        total_extracted += 1
+
+        qid, is_merged = db.upsert_question(
+            question_text=clean_text,
+            normalized_text=norm_text,
+            subject=(item.subject or "").strip(),
+            topic=(item.topic or "").strip(),
+            source_filename=src,
+            class_level=(item.class_level or "").strip(),
+            question_type=(item.question_type or "").strip(),
+            difficulty=(item.difficulty or "").strip(),
+            default_marks=item.default_marks,
+            needs_review=bool(item.needs_review),
+            review_reason=(item.review_reason or "").strip(),
+        )
+        if is_merged:
+            file_stats[src]["duplicates_merged"] += 1
+            total_merged += 1
+        else:
+            file_stats[src]["new_added"] += 1
+            total_new += 1
+
+    file_summaries = [
+        UploadSummary(
+            filename=fname,
+            extracted=st["extracted"],
+            new_added=st["new_added"],
+            duplicates_merged=st["duplicates_merged"],
+        )
+        for fname, st in file_stats.items()
+    ]
+
+    return UploadStatsResponse(
+        total_files=len(file_summaries),
+        total_extracted=total_extracted,
+        total_new=total_new,
+        total_merged=total_merged,
+        file_summaries=file_summaries,
+    )
+
+
+@app.post("/api/upload", response_model=UploadStatsResponse, dependencies=[Depends(verify_auth)])
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    subject: str = Form(""),
+    topic: str = Form(""),
+    class_level: str = Form("")
+):
+    """
+    Upload one or more .docx or .pdf files directly.
+    Enforces 20MB per-file and 50MB batch caps, validates magic-byte headers,
+    applies smart sanitization + context inference, and performs deduplication.
+    """
+    total_batch_size = 0
+    validated_files = []
+
+    for file in files:
+        filename = file.filename or "unknown_file"
+        content = await file.read()
+        total_batch_size = _validate_upload_files_sync_headers(filename, content, total_batch_size)
         validated_files.append((filename, content))
 
     total_extracted = 0
@@ -503,29 +669,38 @@ async def upload_files(
 
     for filename, content in validated_files:
         try:
-            extracted_questions = extract_questions_from_file(filename, content)
+            structured_items, _ = extract_structured_questions_from_file(
+                filename,
+                content,
+                default_subject=subject.strip(),
+                default_topic=topic.strip(),
+                default_class=class_level.strip(),
+            )
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed parsing file '{filename}': {str(e)}")
 
-        file_extracted = len(extracted_questions)
+        file_extracted = len(structured_items)
         file_new = 0
         file_merged = 0
 
-        for q_raw in extracted_questions:
-            clean_text = clean_question_text(q_raw)
-            if not clean_text:
-                continue
-
-            norm_text = normalize_question_text(clean_text)
-            if not norm_text:
+        for it in structured_items:
+            clean_text = it.get("question_text") or ""
+            norm_text = it.get("normalized_text") or normalize_question_text(clean_text)
+            if not clean_text or not norm_text:
                 continue
 
             qid, is_merged = db.upsert_question(
                 question_text=clean_text,
                 normalized_text=norm_text,
-                subject=subject.strip(),
-                topic=topic.strip(),
-                source_filename=filename
+                subject=it.get("subject", subject.strip()),
+                topic=it.get("topic", topic.strip()),
+                source_filename=filename,
+                class_level=it.get("class_level", class_level.strip()),
+                question_type=it.get("question_type", ""),
+                difficulty=it.get("difficulty", ""),
+                default_marks=it.get("default_marks"),
+                needs_review=bool(it.get("needs_review", False)),
+                review_reason=it.get("review_reason", ""),
             )
 
             if is_merged:
@@ -552,24 +727,36 @@ async def upload_files(
         file_summaries=file_summaries
     )
 
+
 @app.get("/api/questions")
 def get_questions(
     search: Optional[str] = Query(None),
     subject: Optional[str] = Query(None),
     topic: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
+    class_level: Optional[str] = Query(None),
+    question_type: Optional[str] = Query(None),
+    difficulty: Optional[str] = Query(None),
+    needs_review: Optional[bool] = Query(None),
+    sort_by: str = Query("recent"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200)
 ):
-    """Returns paginated questions with search and filtering."""
+    """Returns paginated questions with rich search, filtering, and sorting."""
     return db.get_questions(
         search=search,
         subject=subject,
         topic=topic,
         source=source,
+        class_level=class_level,
+        question_type=question_type,
+        difficulty=difficulty,
+        needs_review=needs_review,
+        sort_by=sort_by,
         page=page,
         limit=limit
     )
+
 
 @app.post("/api/questions", dependencies=[Depends(verify_auth)])
 def create_manual_question(payload: QuestionCreate):
@@ -584,12 +771,28 @@ def create_manual_question(payload: QuestionCreate):
     norm_text = normalize_question_text(clean_text)
     source_name = payload.source.strip() if payload.source and payload.source.strip() else "Manual Entry"
 
+    # Lightly infer missing type/difficulty/marks while respecting explicit inputs
+    inferred = infer_question_metadata(
+        cleaned_text=clean_text,
+        sources=[source_name],
+        existing_subject=payload.subject.strip() if payload.subject else "",
+        existing_topic=payload.topic.strip() if payload.topic else "",
+        existing_class=payload.class_level.strip() if payload.class_level else "",
+        explicit_marks=payload.default_marks,
+    )
+
     qid, is_merged = db.upsert_question(
         question_text=clean_text,
         normalized_text=norm_text,
-        subject=payload.subject.strip() if payload.subject else "",
-        topic=payload.topic.strip() if payload.topic else "",
-        source_filename=source_name
+        subject=(payload.subject.strip() if payload.subject else "") or inferred["subject"],
+        topic=(payload.topic.strip() if payload.topic else "") or inferred["topic"],
+        source_filename=source_name,
+        class_level=(payload.class_level.strip() if payload.class_level else "") or inferred["class_level"],
+        question_type=(payload.question_type.strip() if payload.question_type else "") or inferred["question_type"],
+        difficulty=(payload.difficulty.strip() if payload.difficulty else "") or inferred["difficulty"],
+        default_marks=payload.default_marks if payload.default_marks is not None else inferred["default_marks"],
+        needs_review=bool(payload.needs_review) if payload.needs_review is not None else False,
+        review_reason=(payload.review_reason or "").strip(),
     )
 
     return {
@@ -598,38 +801,94 @@ def create_manual_question(payload: QuestionCreate):
         "message": "Duplicate detected: Merged into existing question and increased frequency counter." if is_merged else "Question added to library successfully."
     }
 
+
+@app.get("/api/questions/duplicates", dependencies=[Depends(verify_auth)])
+def find_duplicate_questions(
+    threshold: float = Query(0.80, ge=0.5, le=1.0),
+    limit_groups: int = Query(40, ge=1, le=100)
+):
+    """Finds potential near-duplicate question groups for teacher review & merging."""
+    groups = db.find_potential_duplicates(threshold=threshold, limit_groups=limit_groups)
+    return {
+        "total_groups": len(groups),
+        "groups": groups,
+    }
+
+
+@app.post("/api/questions/bulk-update", dependencies=[Depends(verify_auth)])
+def bulk_update_questions(payload: BulkUpdateQuestionsRequest):
+    """Bulk updates structured tags/marks/review status for selected questions (Teacher & Admin)."""
+    count = db.bulk_update_questions(
+        question_ids=payload.question_ids,
+        subject=payload.subject.strip() if payload.subject is not None else None,
+        topic=payload.topic.strip() if payload.topic is not None else None,
+        class_level=payload.class_level.strip() if payload.class_level is not None else None,
+        question_type=payload.question_type.strip() if payload.question_type is not None else None,
+        difficulty=payload.difficulty.strip() if payload.difficulty is not None else None,
+        default_marks=payload.default_marks,
+        needs_review=payload.needs_review,
+        review_reason=payload.review_reason,
+    )
+    return {
+        "message": f"Updated {count} question(s) successfully.",
+        "updated_count": count,
+    }
+
+
+@app.post("/api/questions/merge", dependencies=[Depends(verify_auth)])
+def merge_duplicate_questions(payload: MergeQuestionsRequest):
+    """Merges selected duplicate questions into target_id, preserving combined frequency & sources (Teacher & Admin)."""
+    cleaned_merged = None
+    norm_merged = None
+    if payload.merged_text is not None and payload.merged_text.strip():
+        cleaned_merged = clean_question_text(payload.merged_text)
+        norm_merged = normalize_question_text(cleaned_merged)
+        if not cleaned_merged or not norm_merged:
+            raise HTTPException(status_code=400, detail="Merged question text cannot be empty.")
+
+    try:
+        merged = db.merge_questions(
+            target_id=payload.target_id,
+            source_ids=payload.source_ids,
+            merged_text=cleaned_merged,
+            merged_normalized_text=norm_merged,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not merged:
+        raise HTTPException(status_code=404, detail="Target question not found.")
+
+    return {
+        "message": f"Merged {len(payload.source_ids)} duplicate(s) into question #{payload.target_id}.",
+        "question": merged,
+    }
+
+
+@app.post("/api/questions/auto-pick", dependencies=[Depends(verify_auth)])
+def auto_pick_paper_questions(payload: AutoPickRequest):
+    """1-Click Auto-Pick Paper Builder endpoint (Teacher & Admin)."""
+    result = db.auto_pick_questions(
+        class_level=payload.class_level,
+        subject=payload.subject,
+        topics=payload.topics,
+        question_type=payload.question_type,
+        difficulty=payload.difficulty,
+        count=payload.count,
+        target_marks=payload.target_marks,
+        prefer_most_repeated=payload.prefer_most_repeated,
+        spread_topics=payload.spread_topics,
+        exclude_needs_review=payload.exclude_needs_review,
+        exclude_ids=payload.exclude_ids,
+    )
+    return result
+
+
 @app.post("/api/questions/by-ids")
 def get_questions_by_ids(req: ExportRequest):
     """Returns full question details for a list of IDs in the exact requested order."""
     return db.get_questions_by_ids(req.question_ids)
 
-@app.put("/api/questions/{question_id}", dependencies=[Depends(verify_auth)])
-def update_question(question_id: int, payload: QuestionUpdate):
-    """Updates question text, subject, or topic."""
-    norm_text = None
-    cleaned_text = None
-    if payload.question_text is not None:
-        cleaned_text = clean_question_text(payload.question_text)
-        norm_text = normalize_question_text(cleaned_text)
-
-    success = db.update_question(
-        question_id=question_id,
-        question_text=cleaned_text,
-        normalized_text=norm_text,
-        subject=payload.subject,
-        topic=payload.topic
-    )
-    if not success:
-        raise HTTPException(status_code=404, detail="Question not found")
-    return {"message": "Question updated successfully"}
-
-@app.delete("/api/questions/{question_id}", dependencies=[Depends(require_admin)])
-def delete_question(question_id: int):
-    """Deletes a question from the library (Admin only)."""
-    success = db.delete_question(question_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Question not found")
-    return {"message": "Question deleted successfully"}
 
 @app.post("/api/questions/bulk-delete", dependencies=[Depends(require_admin)])
 def bulk_delete_questions(payload: BulkDeleteRequest):
@@ -640,33 +899,134 @@ def bulk_delete_questions(payload: BulkDeleteRequest):
         "deleted_count": count
     }
 
+
+@app.put("/api/questions/{question_id}", dependencies=[Depends(verify_auth)])
+def update_question(question_id: int, payload: QuestionUpdate):
+    """Updates question text and structured metadata (Teacher & Admin)."""
+    norm_text = None
+    cleaned_text = None
+    if payload.question_text is not None:
+        cleaned_text = clean_question_text(payload.question_text)
+        if not cleaned_text:
+            raise HTTPException(status_code=400, detail="Question text cannot be empty.")
+        norm_text = normalize_question_text(cleaned_text)
+
+    try:
+        success = db.update_question(
+            question_id=question_id,
+            question_text=cleaned_text,
+            normalized_text=norm_text,
+            subject=payload.subject.strip() if payload.subject is not None else None,
+            topic=payload.topic.strip() if payload.topic is not None else None,
+            class_level=payload.class_level.strip() if payload.class_level is not None else None,
+            question_type=payload.question_type.strip() if payload.question_type is not None else None,
+            difficulty=payload.difficulty.strip() if payload.difficulty is not None else None,
+            default_marks=payload.default_marks,
+            clear_default_marks=bool(payload.clear_default_marks),
+            needs_review=payload.needs_review,
+            review_reason=payload.review_reason.strip() if payload.review_reason is not None else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"message": "Question updated successfully"}
+
+
+@app.delete("/api/questions/{question_id}", dependencies=[Depends(require_admin)])
+def delete_question(question_id: int):
+    """Deletes a question from the library (Admin only)."""
+    success = db.delete_question(question_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"message": "Question deleted successfully"}
+
+
+@app.post("/api/admin/curate/preview", dependencies=[Depends(require_admin)])
+def preview_smart_curation():
+    """Dry-run preview of Automated Smart Curation (Admin only)."""
+    return curate_question_library(db, dry_run=True, create_backup=False)
+
+
+@app.post("/api/admin/curate/run", dependencies=[Depends(require_admin)])
+def run_smart_curation():
+    """Creates backup and runs Automated Smart Curation across the active database (Admin only)."""
+    return curate_question_library(db, dry_run=False, create_backup=True)
+
+
 @app.get("/api/metadata")
 def get_metadata():
-    """Returns metadata (subjects, topics, sources, and duplicate statistics)."""
+    """Returns metadata (classes, subjects, topics, types, difficulties, sources, and duplicate statistics)."""
     return db.get_metadata()
+
 
 @app.post("/api/export")
 def export_questions(payload: ExportRequest):
     """
     Generates and downloads a clean Word document (.docx) or PDF (.pdf)
-    containing the requested questions formatted as a numbered list.
+    containing the requested questions (with optional paper header, section dividers, and per-question marks).
     """
-    questions = db.get_questions_by_ids(payload.question_ids)
-    if not questions:
+    export_rows = []
+
+    if payload.items:
+        id_list = [it.question_id for it in payload.items if it.item_type != "section" and it.question_id]
+        db_map = {q["id"]: q for q in db.get_questions_by_ids(id_list)} if id_list else {}
+
+        for it in payload.items:
+            if it.item_type == "section":
+                sec_title = (it.section_title or it.question_text or "").strip()
+                if sec_title:
+                    export_rows.append({"item_type": "section", "section_title": sec_title})
+            else:
+                q_obj = db_map.get(it.question_id) if it.question_id else None
+                q_text = (it.question_text or "").strip() or (q_obj["question_text"] if q_obj else "")
+                if not q_text:
+                    continue
+                marks = it.marks if it.marks is not None else (q_obj.get("default_marks") if q_obj else None)
+                export_rows.append({
+                    "item_type": "question",
+                    "question_text": q_text,
+                    "marks": marks,
+                })
+    else:
+        questions = db.get_questions_by_ids(payload.question_ids)
+        for q in questions:
+            export_rows.append({
+                "item_type": "question",
+                "question_text": q["question_text"],
+                "marks": q.get("default_marks"),
+            })
+
+    has_question = any(r.get("item_type") != "section" for r in export_rows)
+    if not has_question:
         raise HTTPException(status_code=400, detail="No valid questions found for export.")
 
     fmt = (payload.format or "docx").lower().strip()
-    title = payload.title.strip() if payload.title else ""
+    hdr_dict = payload.paper_header.model_dump() if payload.paper_header else None
+    title = ((hdr_dict or {}).get("exam_title") or payload.title or "").strip()
     base_name = re.sub(r'[^a-zA-Z0-9_-]', '_', title) if title else "Question_Paper"
 
     use_tmpl = bool(payload.use_template)
 
     if fmt == "pdf":
-        stream = generate_pdf_document(questions, title=title, use_template=use_tmpl)
+        stream = generate_pdf_document(
+            export_rows,
+            title=title,
+            use_template=use_tmpl,
+            paper_header=hdr_dict,
+            show_marks=bool(payload.show_marks),
+        )
         filename = f"{base_name}.pdf"
         media_type = "application/pdf"
     else:
-        stream = generate_word_document(questions, title=title, use_template=use_tmpl)
+        stream = generate_word_document(
+            export_rows,
+            title=title,
+            use_template=use_tmpl,
+            paper_header=hdr_dict,
+            show_marks=bool(payload.show_marks),
+        )
         filename = f"{base_name}.docx"
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -817,7 +1177,8 @@ def create_exam(
             "question_id": q.question_id,
             "question_text": q.question_text,
             "marks": q.marks,
-            "question_order": q.question_order or (idx + 1)
+            "question_order": q.question_order or (idx + 1),
+            "section_title": q.section_title or "",
         }
         for idx, q in enumerate(payload.questions)
     ]
@@ -831,7 +1192,9 @@ def create_exam(
         instructions=payload.instructions or "",
         total_marks=payload.total_marks,
         questions=questions_data,
-        created_by=created_by_id
+        created_by=created_by_id,
+        class_level=payload.class_level or "",
+        institute_name=payload.institute_name or "The Squire's Way",
     )
 
     base_url = str(request.base_url).rstrip('/')
@@ -854,6 +1217,15 @@ def list_exams(
     return db.get_exams(status=status, limit=limit, page=page)
 
 
+@app.get("/api/exams/{id}/detail")
+def get_exam_detail_for_clone(id: int, current_user: dict = Depends(verify_auth)):
+    """Returns full exam details and ordered questions for cloning back into Paper Cart."""
+    exam = db.get_exam_by_id(id, include_questions=True)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    return exam
+
+
 @app.get("/api/exams/{code}")
 def get_public_exam(code: str):
     """Public metadata endpoint for student exam room with server clock synchronization."""
@@ -866,6 +1238,8 @@ def get_public_exam(code: str):
         "exam_code": exam["exam_code"],
         "title": exam["title"],
         "subject": exam["subject"],
+        "class_level": exam.get("class_level", ""),
+        "institute_name": exam.get("institute_name", "The Squire's Way"),
         "duration_minutes": exam["duration_minutes"],
         "deadline": exam["deadline"],
         "total_marks": exam["total_marks"],
@@ -878,7 +1252,8 @@ def get_public_exam(code: str):
                 "id": q["id"],
                 "question_order": q["question_order"],
                 "question_text": q["question_text"],
-                "marks": q["marks"]
+                "marks": q["marks"],
+                "section_title": q.get("section_title", ""),
             }
             for q in exam["questions"]
         ]
@@ -1078,17 +1453,98 @@ def get_student_result(code: str, roll_number: str = Query(..., description="Stu
 
 @app.get("/api/exams/{id}/submissions")
 def list_exam_submissions(id: int, current_user: dict = Depends(verify_auth)):
-    """Teacher lists all student submissions for an exam."""
+    """Teacher lists all student submissions for an exam along with class summary stats."""
     exam = db.get_exam_by_id(id, include_questions=False)
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found.")
 
     submissions = db.get_submissions_for_exam(id)
+    stats = db.get_exam_stats(exam, submissions)
     return {
         "exam": exam,
         "submissions": submissions,
+        "stats": stats,
         "total": len(submissions)
     }
+
+
+def _csv_safe_cell(val) -> str:
+    s = "" if val is None else str(val)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
+@app.get("/api/exams/{id}/marksheet.csv")
+def export_exam_marksheet_csv(id: int, current_user: dict = Depends(verify_auth)):
+    """Exports exam submissions & graded marks as a downloadable CSV Marksheet (Teacher & Admin)."""
+    exam = db.get_exam_by_id(id, include_questions=False)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    submissions = db.get_submissions_for_exam(id)
+    # Sort by roll_number ascending for clean school register order
+    submissions_sorted = sorted(submissions, key=lambda s: (s.get("section") or "", s.get("roll_number") or ""))
+    exam_qs, score_map = db.get_exam_marksheet_scores(id)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    q_headers = [
+        f"Q{q.get('question_order') or (i + 1)} (/{q['marks']:g})"
+        for i, q in enumerate(exam_qs)
+    ]
+    writer.writerow([
+        "Exam Code",
+        "Exam Title",
+        "Roll Number",
+        "Student Name",
+        "Section",
+        "Status",
+        "Score Awarded",
+        "Max Marks",
+        "Percentage (%)",
+        "Time Taken (min)",
+        "Submitted At",
+        "Graded At",
+        "Emergency Import",
+        *q_headers,
+        "Overall Feedback",
+    ])
+
+    total_marks = float(exam.get("total_marks") or 0.0)
+    for sub in submissions_sorted:
+        score = sub.get("total_score")
+        pct = round((float(score) / total_marks) * 100, 1) if (score is not None and total_marks > 0) else ""
+        mins = round(int(sub.get("time_taken_seconds") or 0) / 60.0, 1)
+        q_scores = [
+            (score_map[(sub["id"], q["id"])] if score_map.get((sub["id"], q["id"])) is not None else "")
+            for q in exam_qs
+        ]
+        writer.writerow([
+            _csv_safe_cell(exam["exam_code"]),
+            _csv_safe_cell(exam["title"]),
+            _csv_safe_cell(sub.get("roll_number", "")),
+            _csv_safe_cell(sub.get("student_name", "")),
+            _csv_safe_cell(sub.get("section", "")),
+            _csv_safe_cell(sub.get("status", "")),
+            score if score is not None else "",
+            total_marks,
+            pct,
+            mins,
+            _csv_safe_cell(sub.get("submitted_at", "")),
+            _csv_safe_cell(sub.get("graded_at") or ""),
+            "Yes" if sub.get("is_emergency") else "No",
+            *q_scores,
+            _csv_safe_cell(sub.get("feedback", "")),
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    safe_code = re.sub(r"[^a-zA-Z0-9_-]", "_", exam["exam_code"])
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{safe_code}_marksheet.csv"'},
+    )
 
 
 @app.get("/api/submissions/{sub_id}")
@@ -1134,6 +1590,33 @@ def grade_submission(
     }
 
 
+@app.patch("/api/exams/{id}/deadline")
+def extend_exam_deadline(
+    id: int,
+    payload: ExamDeadlineUpdateRequest,
+    current_user: dict = Depends(verify_auth)
+):
+    """Extends/updates an existing exam's deadline and optionally re-opens it (Teacher & Admin)."""
+    try:
+        parse_iso_datetime(payload.deadline)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid deadline format: {e}")
+
+    updated = db.extend_exam_deadline(
+        exam_id=id,
+        new_deadline=payload.deadline,
+        reopen_if_closed=payload.reopen_if_closed,
+        duration_minutes=payload.duration_minutes,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+
+    return {
+        "message": "Exam deadline updated successfully.",
+        "exam": updated,
+    }
+
+
 @app.patch("/api/exams/{id}/toggle")
 def toggle_exam_status(id: int, current_user: dict = Depends(verify_auth)):
     """Toggles exam status between active and closed."""
@@ -1166,8 +1649,8 @@ def update_exam_status(id: int, payload: dict, current_user: dict = Depends(veri
 
 
 @app.delete("/api/exams/{id}")
-def delete_exam(id: int, current_user: dict = Depends(verify_auth)):
-    """Deletes an exam and cascades deletion to questions and submissions."""
+def delete_exam(id: int, current_user: dict = Depends(require_admin)):
+    """Deletes an exam and cascades deletion to questions and submissions (Admin only)."""
     deleted = db.delete_exam(id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Exam not found.")

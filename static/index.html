@@ -51,7 +51,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.6.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.7.3">
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col font-['Inter',sans-serif] transition-colors duration-150">
 
@@ -141,6 +141,10 @@
                         <div class="admin-only border-t border-slate-100 dark:border-slate-700/80 my-1"></div>
                         <div class="admin-only py-1">
                             <div class="px-3.5 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider">Database & Disaster Recovery</div>
+                            <button id="btn-open-curate-menu" class="w-full text-left px-3.5 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 flex items-center space-x-2 font-semibold cursor-pointer transition-colors" title="Run automated metadata cleanup, deduplication & backup">
+                                <span class="text-sm">✨</span>
+                                <span>Smart Curate Library</span>
+                            </button>
                             <button id="btn-full-system-backup" class="w-full text-left px-3.5 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-brand-700 dark:text-brand-300 flex items-center space-x-2 font-semibold cursor-pointer transition-colors" title="Export complete system backup (questions, exams, submissions) for disaster recovery">
                                 <span class="text-sm">💾</span>
                                 <span>Complete System Backup</span>
@@ -187,7 +191,7 @@
                         </svg>
                         <span>Upload Question Bank Files</span>
                     </h2>
-                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Upload Word (.docx) or PDF files. Numbered questions (1., 2., 3., etc.) are extracted and merged automatically.</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Upload Word (.docx) or PDF files. Smart sanitizer cleans footers, extracts Chapter/Lesson context, and lets you preview before saving.</p>
                 </div>
             </div>
 
@@ -213,20 +217,30 @@
                 </div>
 
                 <!-- Tags / Metadata (Optional) -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-2">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject (Optional)</label>
-                        <input type="text" id="upload-subject" placeholder="e.g. Science, Mathematics, History" class="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <label for="upload-class" class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Class Level (Optional)</label>
+                        <input type="text" id="upload-class" list="class-level-options" placeholder="e.g. Class 10, Class 12" class="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Topic / Chapter (Optional)</label>
-                        <input type="text" id="upload-topic" placeholder="e.g. Chapter 4 - Light, Algebra" class="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <label for="upload-subject" class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject (Optional)</label>
+                        <input type="text" id="upload-subject" placeholder="e.g. English, Science, Maths" class="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label for="upload-topic" class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Chapter / Topic (Optional)</label>
+                        <input type="text" id="upload-topic" placeholder="Auto-detected from Lesson markers if blank" class="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                     </div>
                 </div>
+                <datalist id="class-level-options">
+                    <option value="Class 9"></option>
+                    <option value="Class 10"></option>
+                    <option value="Class 11"></option>
+                    <option value="Class 12"></option>
+                </datalist>
 
                 <div class="flex justify-end pt-2">
                     <button type="submit" id="upload-btn" disabled class="inline-flex items-center space-x-2 bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 px-5 py-2.5 rounded-xl text-sm font-semibold cursor-not-allowed transition-all">
-                        <span>Extract & Add to Library</span>
+                        <span>Extract & Preview Questions</span>
                     </button>
                 </div>
             </form>
@@ -237,52 +251,73 @@
 
         <!-- Library Section -->
         <section class="space-y-4">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div>
                     <h2 class="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">Question Library</h2>
-                    <p class="text-xs text-slate-500 dark:text-slate-400">Browse, search, and select questions to build your new question paper.</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Browse, tag, review duplicates, auto-pick papers, or add questions to your Paper Cart.</p>
                 </div>
 
-                <!-- Bulk Selection Actions -->
-                <div class="flex items-center space-x-2">
-                    <button id="open-add-modal-btn" class="flex-1 sm:flex-initial text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white px-3.5 py-2.5 rounded-xl transition-all shadow-sm shadow-brand-500/20 active:scale-95 flex items-center justify-center space-x-1.5 cursor-pointer">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <!-- Productivity & Library Actions -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="open-auto-pick-btn" type="button" class="text-xs font-bold bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white px-3.5 py-2 rounded-xl transition-all shadow-sm shadow-brand-500/20 active:scale-95 flex items-center space-x-1.5 cursor-pointer pressable">
+                        <span>⚡</span>
+                        <span>Auto-Pick Paper</span>
+                    </button>
+                    <button id="open-find-dups-btn" type="button" class="text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-amber-500 dark:hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 px-3 py-2 rounded-xl text-slate-700 dark:text-slate-200 transition-colors shadow-xs cursor-pointer flex items-center space-x-1 pressable">
+                        <span>🔍</span>
+                        <span>Find Duplicates</span>
+                    </button>
+                    <button id="open-curate-btn" type="button" class="admin-only text-xs font-semibold bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-300 px-3 py-2 rounded-xl transition-colors shadow-xs cursor-pointer flex items-center space-x-1 pressable">
+                        <span>✨</span>
+                        <span>Smart Curate</span>
+                    </button>
+                    <button id="open-add-modal-btn" type="button" class="text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white px-3.5 py-2 rounded-xl transition-all shadow-sm shadow-brand-500/20 active:scale-95 flex items-center space-x-1.5 cursor-pointer pressable">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                         </svg>
-                        <span>+ Add Question</span>
+                        <span>Add Question</span>
                     </button>
-                    <button id="add-page-to-cart-btn" class="flex-1 sm:flex-initial text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-brand-500 dark:hover:border-brand-400 hover:text-brand-600 dark:hover:text-brand-400 px-3 py-2.5 rounded-xl text-slate-700 dark:text-slate-200 transition-colors shadow-sm cursor-pointer text-center">
+                    <button id="add-page-to-cart-btn" type="button" class="text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-brand-500 dark:hover:border-brand-400 hover:text-brand-600 dark:hover:text-brand-400 px-3 py-2 rounded-xl text-slate-700 dark:text-slate-200 transition-colors shadow-xs cursor-pointer text-center pressable">
                         + Page to Cart
                     </button>
                 </div>
             </div>
 
             <!-- Bulk Action Toolbar (Appears when 1 or more questions are selected) -->
-            <div id="bulk-action-bar" class="hidden fixed bottom-0 sm:bottom-6 left-0 right-0 sm:left-1/2 sm:-translate-x-1/2 sm:max-w-2xl bg-slate-900/95 backdrop-blur-md text-white p-3 sm:p-3.5 px-4 sm:px-5 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-2.5 z-40 border-t sm:border border-slate-800 transition-all pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div id="bulk-action-bar" class="hidden fixed bottom-0 sm:bottom-6 left-0 right-0 sm:left-1/2 sm:-translate-x-1/2 sm:max-w-4xl bg-slate-900/95 backdrop-blur-md text-white p-3 sm:p-3.5 px-4 sm:px-5 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-2.5 z-40 border-t sm:border border-slate-800 transition-all pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                 <div class="flex items-center space-x-2.5">
-                    <span id="bulk-selected-count" class="bg-brand-500 text-white font-bold text-xs px-2.5 py-1 rounded-lg shrink-0">0 selected</span>
+                    <span id="bulk-selected-count" class="bg-brand-500 text-white font-bold text-xs px-2.5 py-1 rounded-lg shrink-0 tabular-nums">0 selected</span>
                     <label class="flex items-center space-x-1.5 text-xs font-medium cursor-pointer text-slate-300 hover:text-white select-none">
                         <input type="checkbox" id="select-all-page-cb" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 cursor-pointer">
                         <span class="hidden xs:inline sm:inline">Select All</span>
                     </label>
                 </div>
-                <div class="flex items-center space-x-1.5 flex-wrap">
-                    <button id="bulk-add-cart-btn" class="inline-flex items-center space-x-1 text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white px-3 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <button id="bulk-add-cart-btn" type="button" class="inline-flex items-center space-x-1 text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white px-3 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
                         <span>+ Cart</span>
                     </button>
-                    <button id="bulk-docx-btn" class="inline-flex items-center space-x-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 py-2 rounded-xl border border-slate-700 transition-all active:scale-95 cursor-pointer" title="Download selected questions as Word">
+                    <button id="bulk-tag-btn" type="button" class="inline-flex items-center space-x-1 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer" title="Bulk assign Class, Subject, Chapter, Type, Difficulty, or Marks">
+                        <span>🏷️ Bulk Tag</span>
+                    </button>
+                    <button id="bulk-approve-btn" type="button" class="inline-flex items-center space-x-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer" title="Clear Needs Review flag on selected questions">
+                        <span>✓ Approve</span>
+                    </button>
+                    <button id="bulk-merge-btn" type="button" class="inline-flex items-center space-x-1 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer" title="Merge 2 or more selected duplicate questions">
+                        <span>🔗 Merge</span>
+                    </button>
+                    <button id="bulk-docx-btn" type="button" class="inline-flex items-center space-x-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 py-2 rounded-xl border border-slate-700 transition-all active:scale-95 cursor-pointer" title="Download selected questions as Word">
                         <span>📄 Word</span>
                     </button>
-                    <button id="bulk-pdf-btn" class="inline-flex items-center space-x-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 py-2 rounded-xl border border-slate-700 transition-all active:scale-95 cursor-pointer" title="Download selected questions as PDF">
+                    <button id="bulk-pdf-btn" type="button" class="inline-flex items-center space-x-1 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 py-2 rounded-xl border border-slate-700 transition-all active:scale-95 cursor-pointer" title="Download selected questions as PDF">
                         <span>📕 PDF</span>
                     </button>
-                    <button id="bulk-delete-btn" class="inline-flex items-center space-x-1 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl transition-all shadow-md shadow-rose-600/30 active:scale-95 cursor-pointer">
+                    <button id="bulk-delete-btn" type="button" class="admin-only inline-flex items-center space-x-1 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl transition-all shadow-md shadow-rose-600/30 active:scale-95 cursor-pointer">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                         <span>Delete</span>
                     </button>
-                    <button id="clear-selection-btn" class="text-xs font-semibold text-slate-400 hover:text-white px-2 py-1 cursor-pointer">
+                    <button id="clear-selection-btn" type="button" class="text-xs font-semibold text-slate-400 hover:text-white px-2 py-1 cursor-pointer">
                         ✕
                     </button>
                 </div>
@@ -296,7 +331,7 @@
                     </div>
                     <div>
                         <span class="text-slate-400 dark:text-slate-500 block text-[11px] sm:text-xs font-medium">Total Questions</span>
-                        <span id="stat-total" class="font-extrabold text-slate-900 dark:text-white text-base sm:text-lg">0</span>
+                        <span id="stat-total" class="font-extrabold text-slate-900 dark:text-white text-base sm:text-lg tabular-nums">0</span>
                     </div>
                 </div>
                 <div class="bg-white dark:bg-slate-800 p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs flex items-center space-x-3 transition-colors duration-150">
@@ -305,31 +340,47 @@
                     </div>
                     <div>
                         <span class="text-slate-400 dark:text-slate-500 block text-[11px] sm:text-xs font-medium">Duplicates Merged</span>
-                        <span id="stat-merged" class="font-extrabold text-emerald-600 dark:text-emerald-400 text-base sm:text-lg">0</span>
+                        <span id="stat-merged" class="font-extrabold text-emerald-600 dark:text-emerald-400 text-base sm:text-lg tabular-nums">0</span>
                     </div>
                 </div>
-                <div class="col-span-2 sm:col-span-1 bg-white dark:bg-slate-800 p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs flex items-center space-x-3 transition-colors duration-150">
+                <button type="button" id="stat-needs-review-card" class="col-span-2 sm:col-span-1 bg-white dark:bg-slate-800 p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 hover:border-amber-400 dark:hover:border-amber-600 shadow-xs flex items-center space-x-3 transition-colors duration-150 text-left cursor-pointer" title="Click to filter questions flagged as Needs Review">
                     <div class="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-lg shrink-0">
-                        🎯
+                        ⚠️
                     </div>
                     <div>
-                        <span class="text-slate-400 dark:text-slate-500 block text-[11px] sm:text-xs font-medium">Question Bank</span>
-                        <span class="font-semibold text-slate-700 dark:text-slate-200 text-xs">Curated & Verified</span>
+                        <span class="text-slate-400 dark:text-slate-500 block text-[11px] sm:text-xs font-medium">Needs Review</span>
+                        <span id="stat-needs-review" class="font-extrabold text-amber-600 dark:text-amber-400 text-base sm:text-lg tabular-nums">0</span>
                     </div>
-                </div>
+                </button>
             </div>
 
             <!-- Search & Filters Toolbar -->
             <div class="bg-white dark:bg-slate-800 p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3 transition-colors duration-150">
-                <!-- Search & Filters Toggle Row -->
-                <div class="flex items-center gap-2">
-                    <div class="relative flex-1">
-                        <input type="text" id="search-input" placeholder="Search questions..." class="w-full text-sm pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                <!-- Search, Sort & Filters Toggle Row -->
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                    <div class="relative flex-1 min-w-[200px]">
+                        <input type="text" id="search-input" placeholder="Search questions, chapters, keywords..." class="w-full text-sm pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                         <svg class="w-4 h-4 text-slate-400 absolute left-3 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                         <button id="clear-search-btn" type="button" class="hidden absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-full text-xs font-bold transition cursor-pointer" title="Clear search">✕</button>
                     </div>
+
+                    <!-- Sort Selector -->
+                    <select id="sort-questions" aria-label="Sort questions" class="text-xs sm:text-sm px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 shrink-0">
+                        <option value="recent">Sort: Recent</option>
+                        <option value="most_repeated">Sort: Most Repeated</option>
+                        <option value="least_repeated">Sort: Least Repeated</option>
+                        <option value="marks_desc">Sort: Marks High → Low</option>
+                        <option value="marks_asc">Sort: Marks Low → High</option>
+                    </select>
+
+                    <!-- Needs Review Quick Pill -->
+                    <button id="filter-needs-review-btn" type="button" class="shrink-0 inline-flex items-center space-x-1.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 hover:border-amber-400 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors">
+                        <span>⚠️</span>
+                        <span class="hidden md:inline">Needs Review</span>
+                        <span id="needs-review-pill-count" class="bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums">0</span>
+                    </button>
 
                     <!-- View Density Switcher (Comfortable vs Compact) -->
                     <div class="inline-flex items-center p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 shrink-0 select-none">
@@ -354,27 +405,51 @@
                 </div>
 
                 <!-- Dropdowns Grid (Collapsible on Mobile, Grid on Desktop) -->
-                <div id="filters-container" class="hidden sm:grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 sm:pt-0 border-t border-slate-100 dark:border-slate-700 sm:border-0">
+                <div id="filters-container" class="hidden sm:grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 sm:pt-0 border-t border-slate-100 dark:border-slate-700 sm:border-0">
+                    <!-- Filter Class -->
+                    <div>
+                        <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Class</label>
+                        <select id="filter-class" class="w-full text-xs sm:text-sm px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                            <option value="">All Classes</option>
+                        </select>
+                    </div>
+
                     <!-- Filter Subject -->
                     <div>
                         <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Subject</label>
-                        <select id="filter-subject" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <select id="filter-subject" class="w-full text-xs sm:text-sm px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                             <option value="">All Subjects</option>
                         </select>
                     </div>
 
                     <!-- Filter Topic -->
                     <div>
-                        <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Topic / Class</label>
-                        <select id="filter-topic" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
-                            <option value="">All Topics</option>
+                        <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Chapter / Topic</label>
+                        <select id="filter-topic" class="w-full text-xs sm:text-sm px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                            <option value="">All Chapters</option>
+                        </select>
+                    </div>
+
+                    <!-- Filter Question Type -->
+                    <div>
+                        <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Question Type</label>
+                        <select id="filter-type" class="w-full text-xs sm:text-sm px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+
+                    <!-- Filter Difficulty -->
+                    <div>
+                        <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Difficulty</label>
+                        <select id="filter-difficulty" class="w-full text-xs sm:text-sm px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                            <option value="">All Difficulties</option>
                         </select>
                     </div>
 
                     <!-- Filter Source File -->
                     <div>
                         <label class="block sm:hidden text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Source Document</label>
-                        <select id="filter-source" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <select id="filter-source" class="w-full text-xs sm:text-sm px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                             <option value="">All Source Files</option>
                         </select>
                     </div>
@@ -485,8 +560,12 @@
                             <p id="sub-view-meta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Subject • Total Marks: 50 • Duration: 60 min</p>
                         </div>
                     </div>
-                    <div class="flex items-center space-x-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <input type="file" id="emergency-file-input" accept=".squire,.json" class="hidden">
+                        <button id="btn-export-marksheet-csv" type="button" class="px-3 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition cursor-pointer flex items-center space-x-1 shadow-xs" title="Export graded marksheet as CSV for Excel/Google Sheets">
+                            <span>📊</span>
+                            <span>Export Marksheet (CSV)</span>
+                        </button>
                         <button id="btn-import-emergency-sub" class="px-3 py-2 text-xs font-semibold rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition cursor-pointer flex items-center space-x-1 shadow-xs" title="Upload emergency student submission (.squire)">
                             <span>📥</span>
                             <span>Import Emergency (.squire)</span>
@@ -495,6 +574,45 @@
                             <span>🔄</span>
                             <span>Refresh</span>
                         </button>
+                    </div>
+                </div>
+
+                <!-- Class Performance Stats Strip -->
+                <div id="sub-class-stats-bar" class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                    <div class="bg-white dark:bg-slate-800 px-3.5 py-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Submitted</span>
+                        <span id="sub-stat-total" class="text-base font-extrabold text-slate-900 dark:text-white tabular-nums">0</span>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 px-3.5 py-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Pending Review</span>
+                        <span id="sub-stat-pending" class="text-base font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">0</span>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 px-3.5 py-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Class Average</span>
+                        <span id="sub-stat-avg" class="text-base font-extrabold text-brand-600 dark:text-brand-400 tabular-nums">—</span>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 px-3.5 py-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Highest Score</span>
+                        <span id="sub-stat-highest" class="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">—</span>
+                    </div>
+                    <div class="col-span-2 sm:col-span-1 bg-white dark:bg-slate-800 px-3.5 py-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                        <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Pass Rate (≥40%)</span>
+                        <span id="sub-stat-pass" class="text-base font-extrabold text-indigo-600 dark:text-indigo-400 tabular-nums">—</span>
+                    </div>
+                </div>
+
+                <!-- Submissions Search & Status Filter Bar -->
+                <div class="bg-white dark:bg-slate-800 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div class="relative flex-1">
+                        <input type="text" id="sub-search-input" placeholder="Search by student name, roll number, or section..." class="w-full text-xs sm:text-sm pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <div class="inline-flex items-center p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 shrink-0 select-none">
+                        <button type="button" data-sub-filter="all" class="sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-brand-700 dark:text-brand-300 shadow-xs cursor-pointer">All</button>
+                        <button type="button" data-sub-filter="pending" class="sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer">Pending</button>
+                        <button type="button" data-sub-filter="graded" class="sub-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer">Graded</button>
                     </div>
                 </div>
 
@@ -537,15 +655,57 @@
         </div>
 
         <!-- Optional Header & Page Style -->
-        <div class="p-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 space-y-3">
+        <div class="p-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 space-y-2.5 max-h-[46vh] overflow-y-auto">
             <div>
-                <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Document Title / Header (Optional)</label>
-                <input type="text" id="paper-title-input" placeholder="e.g. Science Annual Exam 2026" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                <label for="paper-title-input" class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Exam / Paper Title</label>
+                <input type="text" id="paper-title-input" placeholder="e.g. Half Yearly Examination 2026" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
             </div>
+
+            <!-- Collapsible School Paper Header -->
+            <details id="cart-header-details" class="rounded-xl border border-slate-200 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/50">
+                <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    <span class="flex items-center space-x-1.5">
+                        <span>🏫</span>
+                        <span>School Paper Header</span>
+                        <span class="text-[10px] font-normal text-slate-400">(The Squire's Way, Time, Instructions)</span>
+                    </span>
+                    <svg class="w-4 h-4 text-slate-400 details-chevron transition-transform duration-150" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </summary>
+                <div class="px-3 pb-3 pt-1.5 space-y-2 border-t border-slate-200/70 dark:border-slate-700/70">
+                    <label class="flex items-center space-x-2 text-[11px] font-medium text-slate-600 dark:text-slate-300 cursor-pointer">
+                        <input type="checkbox" id="cart-show-header-cb" checked class="w-3.5 h-3.5 rounded text-brand-600 focus:ring-brand-500">
+                        <span>Include formatted School Paper Header in Word / PDF export</span>
+                    </label>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-0.5">School / Institute Title</label>
+                            <input type="text" id="cart-header-institute" value="The Squire's Way" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-0.5">Class &amp; Subject</label>
+                            <input type="text" id="cart-header-class-subject" placeholder="e.g. Class 10 — English" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-0.5">Time Allowed</label>
+                            <input type="text" id="cart-header-time" placeholder="e.g. 3 Hours" value="3 Hours" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-0.5">Max Marks (Auto-Summed)</label>
+                            <input type="number" step="0.5" min="0" id="cart-header-max-marks" placeholder="Auto" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 tabular-nums">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-0.5">General Instructions (Optional)</label>
+                        <textarea id="cart-header-instructions" rows="2" placeholder="e.g. All questions are compulsory. Marks are indicated against each question." class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"></textarea>
+                    </div>
+                </div>
+            </details>
 
             <!-- Page Style Selection: Normal vs Default Template -->
             <div>
-                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
                     <span>Page Style / Layout:</span>
                     <span id="template-status-tag" class="text-[10px] bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full">✓ Default Template Active</span>
                 </label>
@@ -559,9 +719,19 @@
                         <span>📄 Normal</span>
                     </label>
                 </div>
-                <p id="style-desc" class="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
+                <p id="style-desc" class="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-snug">
                     Uses your master printout layout: <strong>A4 size, 0.5" margins, double page border, and Times New Roman</strong>.
                 </p>
+            </div>
+
+            <!-- Cart Marks Summary & Section Divider Action -->
+            <div class="flex items-center justify-between pt-1">
+                <div class="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    Total Paper Marks: <span id="cart-total-marks" class="text-brand-600 dark:text-brand-400 tabular-nums">0</span>
+                </div>
+                <button id="add-cart-section-btn" type="button" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 border border-brand-200/70 dark:border-brand-800/70 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition cursor-pointer">
+                    + Section Divider
+                </button>
             </div>
         </div>
 
@@ -609,15 +779,53 @@
                 <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Question Text</label>
                 <textarea id="edit-text" rows="4" class="w-full text-sm p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"></textarea>
             </div>
-            <div class="grid grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Class Level</label>
+                    <input type="text" id="edit-class" list="class-level-options" placeholder="e.g. Class 10" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                </div>
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject</label>
                     <input type="text" id="edit-subject" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Topic</label>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Chapter / Topic</label>
                     <input type="text" id="edit-topic" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                 </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Question Type</label>
+                    <select id="edit-type" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <option value="">Unspecified</option>
+                        <option value="Short Answer">Short Answer</option>
+                        <option value="Long Answer">Long Answer</option>
+                        <option value="MCQ">MCQ</option>
+                        <option value="Extract / Reference">Extract / Reference</option>
+                        <option value="Writing / Composition">Writing / Composition</option>
+                        <option value="Grammar">Grammar</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Difficulty</label>
+                    <select id="edit-difficulty" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <option value="">Unspecified</option>
+                        <option value="Easy">Easy</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Default Marks</label>
+                    <input type="number" step="0.5" min="0.5" id="edit-marks" placeholder="e.g. 2, 5" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                </div>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/60">
+                <label class="flex items-center space-x-2 text-xs font-semibold text-amber-800 dark:text-amber-300 cursor-pointer">
+                    <input type="checkbox" id="edit-needs-review" class="w-4 h-4 rounded text-amber-600 focus:ring-amber-500">
+                    <span>Flagged as Needs Review</span>
+                </label>
+                <span id="edit-review-reason" class="text-[11px] text-amber-700 dark:text-amber-400 truncate max-w-[230px]"></span>
             </div>
             <div class="flex justify-end space-x-2 pt-2">
                 <button id="cancel-edit-btn" class="px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/60">Cancel</button>
@@ -644,14 +852,45 @@
                 <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Question Text <span class="text-rose-500">*</span></label>
                 <textarea id="add-q-text" rows="4" placeholder="Type or paste your question here..." class="w-full text-sm p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"></textarea>
             </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject (Optional)</label>
-                    <input type="text" id="add-q-subject" placeholder="e.g. Physics, History" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Class Level</label>
+                    <input type="text" id="add-q-class" list="class-level-options" placeholder="e.g. Class 10" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Topic / Chapter (Optional)</label>
-                    <input type="text" id="add-q-topic" placeholder="e.g. Optics, Thermodynamics" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject</label>
+                    <input type="text" id="add-q-subject" placeholder="e.g. English, Physics" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Chapter / Topic</label>
+                    <input type="text" id="add-q-topic" placeholder="e.g. A Letter to God" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Question Type</label>
+                    <select id="add-q-type" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <option value="">Auto-detect</option>
+                        <option value="Short Answer">Short Answer</option>
+                        <option value="Long Answer">Long Answer</option>
+                        <option value="MCQ">MCQ</option>
+                        <option value="Extract / Reference">Extract / Reference</option>
+                        <option value="Writing / Composition">Writing / Composition</option>
+                        <option value="Grammar">Grammar</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Difficulty</label>
+                    <select id="add-q-difficulty" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                        <option value="">Auto-detect</option>
+                        <option value="Easy">Easy</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Default Marks</label>
+                    <input type="number" step="0.5" min="0.5" id="add-q-marks" placeholder="Auto" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                 </div>
             </div>
             <div>
@@ -788,9 +1027,17 @@
 
             <form id="exam-setup-form" class="space-y-4">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    <div class="sm:col-span-2">
+                    <div>
                         <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Exam Title *</label>
                         <input type="text" id="setup-exam-title" required placeholder="e.g. Grade 10 English Literature Midterm" class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">School / Header Title</label>
+                        <input type="text" id="setup-exam-institute" value="The Squire's Way" placeholder="The Squire's Way" class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Class Level</label>
+                        <input type="text" id="setup-exam-class" list="class-level-options" placeholder="e.g. Class 10" class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Subject</label>
@@ -800,10 +1047,9 @@
                         <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Duration (Minutes) *</label>
                         <input type="number" id="setup-exam-duration" min="5" max="360" value="60" required class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                     </div>
-                    <div class="sm:col-span-2">
+                    <div>
                         <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Scheduled Deadline (Date & Time) *</label>
                         <input type="datetime-local" id="setup-exam-deadline" required class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
-                        <p class="text-[11px] text-slate-400 mt-0.5">Students cannot start or submit after this deadline expires.</p>
                     </div>
                     <div class="sm:col-span-2">
                         <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Instructions for Students</label>
@@ -907,9 +1153,9 @@
     <div id="grading-workspace-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3 sm:p-5">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-4xl w-full h-[92vh] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
             <!-- Modal Header -->
-            <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-700/80 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between shrink-0">
+            <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-700/80 bg-slate-50 dark:bg-slate-900/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div>
-                    <div class="flex items-center space-x-2">
+                    <div class="flex items-center flex-wrap gap-2">
                         <span id="grade-student-name" class="font-bold text-base sm:text-lg text-slate-900 dark:text-white">Student Name</span>
                         <span id="grade-roll-badge" class="px-2 py-0.5 text-xs font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md">ROLL-001</span>
                         <span id="grade-section-badge" class="px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-md">Section A</span>
@@ -917,9 +1163,15 @@
                     <p id="grade-exam-meta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Exam Title • Submitted at ... • Time taken: 45m</p>
                 </div>
                 <div class="flex items-center space-x-3">
+                    <!-- Prev / Next Navigation -->
+                    <div class="inline-flex items-center rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden shadow-xs">
+                        <button type="button" id="btn-grade-prev" class="px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer" title="Previous student">← Prev</button>
+                        <span id="grade-position-badge" class="px-2.5 py-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400 border-x border-slate-200 dark:border-slate-700 tabular-nums">1 / 1</span>
+                        <button type="button" id="btn-grade-next" class="px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer" title="Next student">Next →</button>
+                    </div>
                     <div class="text-right">
                         <span class="text-[10px] uppercase font-bold text-slate-400 block">Total Score</span>
-                        <span class="text-base sm:text-lg font-mono font-extrabold text-brand-600 dark:text-brand-400"><span id="live-awarded-score">0</span> / <span id="grade-max-score">50</span></span>
+                        <span class="text-base sm:text-lg font-mono font-extrabold text-brand-600 dark:text-brand-400 tabular-nums"><span id="live-awarded-score">0</span> / <span id="grade-max-score">50</span></span>
                     </div>
                     <button type="button" id="close-grading-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 text-xl leading-none cursor-pointer">&times;</button>
                 </div>
@@ -933,15 +1185,25 @@
             <!-- Footer: Overall Feedback & Publish Button -->
             <div class="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 shrink-0 space-y-3">
                 <div>
-                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Overall Teacher Feedback for Student</label>
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Overall Teacher Feedback for Student</label>
+                        <div class="flex flex-wrap items-center gap-1" id="overall-feedback-chips">
+                            <button type="button" data-chip="Excellent work! Clear and well-structured answers." class="grade-overall-chip px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 cursor-pointer">+ Excellent</button>
+                            <button type="button" data-chip="Good effort! Review key points to score even higher." class="grade-overall-chip px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:bg-blue-200 cursor-pointer">+ Good effort</button>
+                            <button type="button" data-chip="Needs more detail and clearer handwriting." class="grade-overall-chip px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 cursor-pointer">+ Needs detail</button>
+                        </div>
+                    </div>
                     <input type="text" id="grade-overall-feedback" placeholder="e.g. Excellent dramatic analysis, keep an eye on spelling in question 3." class="w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500">
                 </div>
-                <div class="flex items-center justify-between">
+                <div class="flex flex-wrap items-center justify-between gap-2">
                     <span id="grading-save-indicator" class="text-xs text-slate-400">All marks calculated live</span>
-                    <div class="flex items-center space-x-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <button type="button" id="btn-cancel-grading" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
-                        <button type="button" id="btn-publish-evaluation" class="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-500/20 active:scale-95 cursor-pointer flex items-center space-x-1.5">
-                            <span>Publish Evaluation & Marks 🚀</span>
+                        <button type="button" id="btn-publish-evaluation" class="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm active:scale-95 cursor-pointer flex items-center space-x-1">
+                            <span>Publish &amp; Close</span>
+                        </button>
+                        <button type="button" id="btn-publish-and-next" class="px-5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white shadow-md shadow-brand-500/20 active:scale-95 cursor-pointer flex items-center space-x-1.5">
+                            <span>Publish &amp; Next Pending →</span>
                         </button>
                     </div>
                 </div>
@@ -985,6 +1247,262 @@
                     ⬇ Download SVG
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- 1. Pre-Import Preview Modal (Review & Tag Before Saving) -->
+    <div id="import-preview-modal" role="dialog" aria-modal="true" aria-labelledby="import-preview-title" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3 sm:p-5">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-5xl w-full max-h-[92vh] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+            <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between shrink-0">
+                <div>
+                    <h3 id="import-preview-title" class="font-bold text-slate-900 dark:text-white text-base sm:text-lg flex items-center space-x-2">
+                        <span>🔍</span>
+                        <span>Review &amp; Tag Before Saving</span>
+                    </h3>
+                    <p id="import-preview-summary" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">0 extracted questions ready to inspect</p>
+                </div>
+                <button type="button" id="close-import-preview-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 text-xl leading-none cursor-pointer">&times;</button>
+            </div>
+
+            <!-- Batch Override Bar -->
+            <div class="px-4 sm:px-5 py-3 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700/80 flex flex-wrap items-center gap-2 shrink-0">
+                <label class="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer mr-2">
+                    <input type="checkbox" id="import-preview-select-all" checked class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                    <span>Include All</span>
+                </label>
+                <input type="text" id="import-batch-class" list="class-level-options" placeholder="Apply Class to all..." class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-32">
+                <input type="text" id="import-batch-subject" placeholder="Apply Subject..." class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-36">
+                <input type="text" id="import-batch-topic" placeholder="Apply Chapter..." class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-40">
+                <button type="button" id="btn-apply-import-batch" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 cursor-pointer">Apply to Included</button>
+            </div>
+
+            <!-- Scrollable Extracted Questions List -->
+            <div id="import-preview-list" class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5 bg-slate-50/50 dark:bg-slate-900/30">
+                <!-- Populated via JS -->
+            </div>
+
+            <div class="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <span id="import-preview-included-count" class="text-xs font-semibold text-slate-600 dark:text-slate-300">0 selected for import</span>
+                <div class="flex items-center space-x-2">
+                    <button type="button" id="cancel-import-preview-btn" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
+                    <button type="button" id="confirm-import-preview-btn" class="px-5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white shadow-md shadow-brand-500/20 cursor-pointer">1-Click Confirm Import ✓</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Bulk Tag & Edit Modal -->
+    <div id="bulk-tag-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-tag-title" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div>
+                    <h3 id="bulk-tag-title" class="font-bold text-slate-900 dark:text-white text-base">🏷️ Bulk Tag &amp; Edit Questions</h3>
+                    <p id="bulk-tag-subtitle" class="text-xs text-slate-500 dark:text-slate-400">Leave any field blank to keep existing values unchanged.</p>
+                </div>
+                <button type="button" id="close-bulk-tag-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg cursor-pointer">&times;</button>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Class Level</label>
+                    <input type="text" id="bulk-tag-class" list="class-level-options" placeholder="Keep unchanged" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject</label>
+                    <input type="text" id="bulk-tag-subject" placeholder="Keep unchanged" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Chapter / Topic</label>
+                    <input type="text" id="bulk-tag-topic" placeholder="Keep unchanged" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Question Type</label>
+                    <select id="bulk-tag-type" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                        <option value="">Keep unchanged</option>
+                        <option value="Short Answer">Short Answer</option>
+                        <option value="Long Answer">Long Answer</option>
+                        <option value="MCQ">MCQ</option>
+                        <option value="Extract / Reference">Extract / Reference</option>
+                        <option value="Writing / Composition">Writing / Composition</option>
+                        <option value="Grammar">Grammar</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Difficulty</label>
+                    <select id="bulk-tag-difficulty" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                        <option value="">Keep unchanged</option>
+                        <option value="Easy">Easy</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Default Marks</label>
+                    <input type="number" step="0.5" min="0.5" id="bulk-tag-marks" placeholder="Keep unchanged" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Review Status</label>
+                    <select id="bulk-tag-review" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                        <option value="">Keep unchanged</option>
+                        <option value="approve">✓ Mark Approved (Clear Needs Review)</option>
+                        <option value="flag">⚠️ Flag Needs Review</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                <button type="button" id="cancel-bulk-tag-btn" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
+                <button type="button" id="save-bulk-tag-btn" class="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm cursor-pointer">Apply Tags</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Merge & Near-Duplicate Reviewer Modal -->
+    <div id="merge-duplicates-modal" role="dialog" aria-modal="true" aria-labelledby="merge-dups-title" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3 sm:p-5">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-4xl w-full max-h-[90vh] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+            <div class="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between shrink-0">
+                <div>
+                    <h3 id="merge-dups-title" class="font-bold text-slate-900 dark:text-white text-base sm:text-lg">🔗 Merge &amp; Deduplicate Questions</h3>
+                    <p id="merge-dups-subtitle" class="text-xs text-slate-500 dark:text-slate-400">Combine near-duplicate questions cleanly while summing repeat frequencies.</p>
+                </div>
+                <button type="button" id="close-merge-dups-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 text-xl leading-none cursor-pointer">&times;</button>
+            </div>
+            <div id="merge-dups-body" class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+                <!-- Dynamically populated for either Manual Selected Merge or Auto Near-Duplicate Clusters -->
+            </div>
+            <div class="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 flex justify-end shrink-0">
+                <button type="button" id="close-merge-dups-footer" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. 1-Click Auto-Pick Paper Builder Modal -->
+    <div id="auto-pick-modal" role="dialog" aria-modal="true" aria-labelledby="auto-pick-title" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div>
+                    <h3 id="auto-pick-title" class="font-bold text-slate-900 dark:text-white text-base">⚡ 1-Click Auto-Pick Paper Builder</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Automatically curate balanced questions straight into your Paper Cart.</p>
+                </div>
+                <button type="button" id="close-auto-pick-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg cursor-pointer">&times;</button>
+            </div>
+            <form id="auto-pick-form" class="space-y-3.5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Class Level</label>
+                        <select id="auto-pick-class" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                            <option value="">Any Class</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Subject</label>
+                        <select id="auto-pick-subject" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                            <option value="">Any Subject</option>
+                        </select>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Chapter / Topic (Optional)</label>
+                        <select id="auto-pick-topic" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                            <option value="">Any Chapter (Spread across chapters)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Question Type</label>
+                        <select id="auto-pick-type" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                            <option value="">Any Type</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Difficulty</label>
+                        <select id="auto-pick-difficulty" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                            <option value="">Any Difficulty</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Number of Questions</label>
+                        <input type="number" id="auto-pick-count" min="1" max="100" value="10" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Target Marks (Optional)</label>
+                        <input type="number" step="0.5" min="1" id="auto-pick-target-marks" placeholder="e.g. 50 or 80" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                    </div>
+                </div>
+                <div class="space-y-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/70 dark:border-slate-700/70 text-xs">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" id="auto-pick-most-repeated" checked class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                        <span>Prioritize <strong>Most Repeated / High-Yield</strong> exam questions</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" id="auto-pick-spread-topics" checked class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                        <span>Spread picks evenly across different chapters (round-robin)</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" id="auto-pick-exclude-review" checked class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                        <span>Exclude questions flagged as <strong>Needs Review</strong></span>
+                    </label>
+                </div>
+                <div class="flex justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <button type="button" id="cancel-auto-pick-btn" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
+                    <button type="submit" id="submit-auto-pick-btn" class="px-5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-brand-600 to-rose-600 hover:from-brand-700 hover:to-rose-700 text-white shadow-md shadow-brand-500/20 cursor-pointer">⚡ Auto-Pick &amp; Open Cart</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 5. Admin Smart Curation Modal -->
+    <div id="curate-modal" role="dialog" aria-modal="true" aria-labelledby="curate-modal-title" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div>
+                    <h3 id="curate-modal-title" class="font-bold text-slate-900 dark:text-white text-base">✨ Smart Library Curation (Admin Only)</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Removes pure dividers, strips footers/OR noise, infers Class/Chapter/Type/Marks, merges duplicates &amp; creates a JSON backup first.</p>
+                </div>
+                <button type="button" id="close-curate-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg cursor-pointer">&times;</button>
+            </div>
+            <div id="curate-preview-body" class="space-y-3 text-xs">
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-center">Click "Run Dry-Run Preview" to analyze your current database safely.</div>
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                <button type="button" id="cancel-curate-btn" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Close</button>
+                <button type="button" id="btn-curate-preview" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white cursor-pointer">🔍 Run Dry-Run Preview</button>
+                <button type="button" id="btn-curate-apply" class="px-5 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-sm cursor-pointer">✨ Backup &amp; Apply Curation</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. Extend Exam Deadline Modal -->
+    <div id="extend-deadline-modal" role="dialog" aria-modal="true" aria-labelledby="extend-deadline-title" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                <div>
+                    <h3 id="extend-deadline-title" class="font-bold text-slate-900 dark:text-white text-base">⏱️ Extend Exam Deadline</h3>
+                    <p id="extend-deadline-exam-name" class="text-xs text-slate-500 dark:text-slate-400 truncate max-w-xs"></p>
+                </div>
+                <button type="button" id="close-extend-deadline-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg cursor-pointer">&times;</button>
+            </div>
+            <form id="extend-deadline-form" class="space-y-3.5">
+                <input type="hidden" id="extend-deadline-exam-id">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">New Scheduled Deadline *</label>
+                    <input type="datetime-local" id="extend-deadline-input" required class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                    <div class="flex flex-wrap gap-1.5 mt-2">
+                        <button type="button" data-add-hours="1" class="quick-extend-chip px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-700 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-slate-700 dark:text-slate-200 cursor-pointer">+1 Hour</button>
+                        <button type="button" data-add-hours="24" class="quick-extend-chip px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-700 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-slate-700 dark:text-slate-200 cursor-pointer">+1 Day</button>
+                        <button type="button" data-add-hours="72" class="quick-extend-chip px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-700 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-slate-700 dark:text-slate-200 cursor-pointer">+3 Days</button>
+                        <button type="button" data-add-hours="168" class="quick-extend-chip px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-700 hover:bg-brand-100 dark:hover:bg-brand-900/50 text-slate-700 dark:text-slate-200 cursor-pointer">+7 Days</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Duration (Minutes, Optional)</label>
+                    <input type="number" id="extend-duration-input" min="5" max="360" class="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                </div>
+                <label class="flex items-center space-x-2 text-xs font-medium text-slate-700 dark:text-slate-200 cursor-pointer">
+                    <input type="checkbox" id="extend-reopen-cb" checked class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                    <span>Automatically re-open exam if currently Closed</span>
+                </label>
+                <div class="flex justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <button type="button" id="cancel-extend-deadline-btn" class="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 rounded-xl text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white shadow-sm cursor-pointer">Save New Deadline</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -1060,6 +1578,6 @@
     </nav>
 
     <!-- Application Script -->
-    <script src="/static/app.js?v=3.6.4"></script>
+    <script src="/static/app.js?v=3.7.3"></script>
 </body>
 </html>
