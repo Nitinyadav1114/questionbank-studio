@@ -410,17 +410,24 @@ class Database:
     def _bool_val(self, val: bool):
         return bool(val) if self.is_postgres else int(bool(val))
 
+    def _row_keys(self, r) -> set:
+        """Materializes row column names into a reusable set (safe for psycopg2 DictRow whose .keys() is a one-shot iterator)."""
+        if hasattr(r, "keys"):
+            return set(r.keys())
+        return set()
+
     def _row_to_question_dict(self, r, include_normalized: bool = False) -> Dict[str, Any]:
         try:
             srcs = json.loads(r["sources"]) if r["sources"] else []
         except Exception:
             srcs = []
-        keys = r.keys() if hasattr(r, "keys") else []
-        def _get(col, default=None):
-            if col in keys:
-                return r[col]
-            return default
+        keys = self._row_keys(r)
 
+        def _get(col, default=None):
+            return r[col] if col in keys else default
+
+        def_marks = _get("default_marks")
+        needs_rev = _get("needs_review")
         item = {
             "id": r["id"],
             "question_text": r["question_text"],
@@ -429,13 +436,13 @@ class Database:
             "topic": _get("topic") or "",
             "question_type": _get("question_type") or "",
             "difficulty": _get("difficulty") or "",
-            "default_marks": float(_get("default_marks")) if _get("default_marks") is not None else None,
-            "needs_review": bool(_get("needs_review")) if _get("needs_review") is not None else False,
+            "default_marks": float(def_marks) if def_marks is not None else None,
+            "needs_review": bool(needs_rev) if needs_rev is not None else False,
             "review_reason": _get("review_reason") or "",
             "frequency": r["frequency"] or 1,
             "sources": srcs,
-            "created_at": str(r["created_at"]),
-            "updated_at": str(r["updated_at"]),
+            "created_at": _iso_ts(r["created_at"]),
+            "updated_at": _iso_ts(r["updated_at"]),
         }
         if include_normalized:
             item["normalized_text"] = _get("normalized_text") or ""
@@ -1668,7 +1675,7 @@ class Database:
 
             exams_list = []
             for r in rows:
-                keys = r.keys() if hasattr(r, "keys") else []
+                keys = self._row_keys(r)
                 exams_list.append({
                     "id": r["id"],
                     "exam_code": r["exam_code"],
@@ -1710,7 +1717,7 @@ class Database:
             if not row:
                 return None
 
-            keys = row.keys() if hasattr(row, "keys") else []
+            keys = self._row_keys(row)
             exam = {
                 "id": row["id"],
                 "exam_code": row["exam_code"],
@@ -1745,7 +1752,7 @@ class Database:
                         "question_order": qr["question_order"],
                         "question_text": qr["question_text"],
                         "marks": float(qr["marks"]),
-                        "section_title": (qr["section_title"] if "section_title" in (qr.keys() if hasattr(qr, "keys") else []) else "") or ""
+                        "section_title": (qr["section_title"] if "section_title" in self._row_keys(qr) else "") or ""
                     }
                     for qr in q_rows
                 ]
@@ -1767,7 +1774,7 @@ class Database:
             if not row:
                 return None
 
-            keys = row.keys() if hasattr(row, "keys") else []
+            keys = self._row_keys(row)
             exam = {
                 "id": row["id"],
                 "exam_code": row["exam_code"],
@@ -1802,7 +1809,7 @@ class Database:
                         "question_order": qr["question_order"],
                         "question_text": qr["question_text"],
                         "marks": float(qr["marks"]),
-                        "section_title": (qr["section_title"] if "section_title" in (qr.keys() if hasattr(qr, "keys") else []) else "") or ""
+                        "section_title": (qr["section_title"] if "section_title" in self._row_keys(qr) else "") or ""
                     }
                     for qr in q_rows
                 ]
@@ -2019,6 +2026,7 @@ class Database:
             if not row:
                 return None
 
+            row_keys = self._row_keys(row)
             sub_dict = {
                 "id": row["id"],
                 "exam_id": row["exam_id"],
@@ -2031,8 +2039,8 @@ class Database:
                 "submitted_at": _iso_ts(row["submitted_at"]),
                 "time_taken_seconds": row["time_taken_seconds"],
                 "status": row["status"],
-                "is_emergency": bool(row["is_emergency"]) if "is_emergency" in row.keys() else False,
-                "emergency_hash": row["emergency_hash"] if "emergency_hash" in row.keys() else None,
+                "is_emergency": bool(row["is_emergency"]) if "is_emergency" in row_keys else False,
+                "emergency_hash": row["emergency_hash"] if "emergency_hash" in row_keys else None,
                 "total_score": float(row["total_score"]) if row["total_score"] is not None else None,
                 "percentage": round((float(row["total_score"]) / float(row["total_marks"])) * 100, 1) if (row["total_score"] is not None and row["total_marks"] > 0) else None,
                 "feedback": row["feedback"] or "",
@@ -2057,7 +2065,7 @@ class Database:
                     "question_order": ar["question_order"],
                     "question_text": ar["question_text"],
                     "marks": float(ar["max_marks"]),
-                    "section_title": (ar["section_title"] if "section_title" in (ar.keys() if hasattr(ar, "keys") else []) else "") or "",
+                    "section_title": (ar["section_title"] if "section_title" in self._row_keys(ar) else "") or "",
                     "marks_awarded": float(ar["marks_awarded"]) if ar["marks_awarded"] is not None else None,
                     "typed_answer": ar["typed_answer"] or "",
                     "image_data": ar["image_data"] or "",
@@ -2082,8 +2090,10 @@ class Database:
             """)
             cursor.execute(query, (exam_id,))
             rows = cursor.fetchall()
-            return [
-                {
+            res_list = []
+            for r in rows:
+                r_keys = self._row_keys(r)
+                res_list.append({
                     "id": r["id"],
                     "exam_id": r["exam_id"],
                     "student_name": r["student_name"],
@@ -2092,15 +2102,14 @@ class Database:
                     "submitted_at": _iso_ts(r["submitted_at"]),
                     "time_taken_seconds": r["time_taken_seconds"],
                     "status": r["status"],
-                    "is_emergency": bool(r["is_emergency"]) if "is_emergency" in r.keys() else False,
-                    "emergency_hash": r["emergency_hash"] if "emergency_hash" in r.keys() else None,
+                    "is_emergency": bool(r["is_emergency"]) if "is_emergency" in r_keys else False,
+                    "emergency_hash": r["emergency_hash"] if "emergency_hash" in r_keys else None,
                     "total_score": float(r["total_score"]) if r["total_score"] is not None else None,
                     "total_marks": float(r["total_marks"]),
                     "feedback": r["feedback"] or "",
                     "graded_at": _iso_ts(r["graded_at"]) if r["graded_at"] else None
-                }
-                for r in rows
-            ]
+                })
+            return res_list
 
     def get_exam_marksheet_scores(self, exam_id: int) -> Tuple[List[Dict[str, Any]], Dict[Tuple[int, int], Optional[float]]]:
         """Returns ordered exam questions and {(submission_id, exam_question_id): marks_awarded} for CSV marksheet."""
@@ -2150,6 +2159,7 @@ class Database:
             if not row:
                 return None
 
+            row_keys = self._row_keys(row)
             sub_dict = {
                 "id": row["id"],
                 "exam_id": row["exam_id"],
@@ -2163,8 +2173,8 @@ class Database:
                 "submitted_at": _iso_ts(row["submitted_at"]),
                 "time_taken_seconds": row["time_taken_seconds"],
                 "status": row["status"],
-                "is_emergency": bool(row["is_emergency"]) if "is_emergency" in row.keys() else False,
-                "emergency_hash": row["emergency_hash"] if "emergency_hash" in row.keys() else None,
+                "is_emergency": bool(row["is_emergency"]) if "is_emergency" in row_keys else False,
+                "emergency_hash": row["emergency_hash"] if "emergency_hash" in row_keys else None,
                 "total_score": float(row["total_score"]) if row["total_score"] is not None else None,
                 "percentage": round((float(row["total_score"]) / float(row["total_marks"])) * 100, 1) if (row["total_score"] is not None and row["total_marks"] > 0) else None,
                 "feedback": row["feedback"] or "",
@@ -2191,7 +2201,7 @@ class Database:
                     "question_order": ar["question_order"],
                     "question_text": ar["question_text"],
                     "max_marks": float(ar["max_marks"]),
-                    "section_title": (ar["section_title"] if "section_title" in (ar.keys() if hasattr(ar, "keys") else []) else "") or "",
+                    "section_title": (ar["section_title"] if "section_title" in self._row_keys(ar) else "") or "",
                     "marks_awarded": float(ar["marks_awarded"]) if ar["marks_awarded"] is not None else None,
                     "typed_answer": ar["typed_answer"] or "",
                     "image_data": ar["image_data"] or "",

@@ -1324,3 +1324,69 @@ vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), examSandbox);
     assert len(sc_zoom_btns) == 1
     assert sc_zoom_btns[0].attrib["data-q-idx"] == "0"
 
+
+def test_psycopg2_dictrow_iterator_keys_safety(tmp_path):
+    """
+    Regression test for live Render PostgreSQL HTTP 500:
+    psycopg2.extras.DictRow.keys() returns a single-use iterator (`iter(self._index)`).
+    Calling `col in r.keys()` multiple times exhausts the iterator and previously caused
+    `float(_get('default_marks'))` to raise `TypeError: float() argument must be a string or a real number, not 'NoneType'`.
+    """
+    import psycopg2.extras
+    from contextlib import contextmanager
+
+    class MockDictCursor:
+        def __init__(self, cols):
+            self.index = {col: idx for idx, col in enumerate(cols)}
+            self.description = tuple((col,) for col in cols)
+
+    db_path = str(tmp_path / "dictrow_safety.db")
+    test_db = Database(db_path)
+
+    cols = [
+        "id", "question_text", "normalized_text", "class_level", "subject",
+        "topic", "question_type", "difficulty", "default_marks",
+        "needs_review", "review_reason", "frequency", "sources",
+        "created_at", "updated_at",
+    ]
+    cur = MockDictCursor(cols)
+    dr = psycopg2.extras.DictRow(cur)
+    now_dt = datetime(2026, 11, 25, 14, 40, 0)
+    vals = [
+        42, "Why did Lencho write a letter?", "why did lencho write a letter",
+        "Class 10", "English", "A Letter to God", "Short Answer", "Easy",
+        2.0, True, "Needs check", 3, '["Class_10th.docx"]', now_dt, now_dt,
+    ]
+    for i, v in enumerate(vals):
+        dr[i] = v
+
+    parsed = test_db._row_to_question_dict(dr, include_normalized=True)
+    assert parsed["id"] == 42
+    assert parsed["default_marks"] == 2.0
+    assert parsed["needs_review"] is True
+    assert parsed["review_reason"] == "Needs check"
+    assert parsed["class_level"] == "Class 10"
+    assert parsed["created_at"] == "2026-11-25T14:40:00+00:00"
+
+    # Also test DictRow where keys are consumed in reverse order on exam/submission helpers
+    exam_cols = [
+        "id", "exam_code", "title", "subject", "class_level", "institute_name",
+        "duration_minutes", "deadline", "total_marks", "instructions", "status",
+        "created_by", "created_at", "updated_at",
+    ]
+    e_cur = MockDictCursor(exam_cols)
+    e_dr = psycopg2.extras.DictRow(e_cur)
+    e_vals = [
+        6, "PHYS-2026-8BD", "QA Exam", "Physics", "Class 11", "The Squire's Way",
+        60, now_dt, 25.0, "Inst", "active", 1, now_dt, now_dt,
+    ]
+    for i, v in enumerate(e_vals):
+        e_dr[i] = v
+
+    keys = test_db._row_keys(e_dr)
+    # Reverse order checks must never exhaust DictRow keys!
+    assert "institute_name" in keys
+    assert "class_level" in keys
+    assert "institute_name" in keys
+
+
