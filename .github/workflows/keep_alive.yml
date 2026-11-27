@@ -2,25 +2,41 @@ name: Render Keep-Alive Ping ⏱️
 
 on:
   schedule:
-    # Runs every 14 minutes between 02:00 UTC and 18:00 UTC (7:30 AM to 11:30 PM IST)
-    # Covers all active school and study hours (16 hrs/day = ~480 hrs/month)
-    # Staying safely within Render's 750 free instance hours per month limit.
-    - cron: '*/14 2-18 * * *'
+    # Offset away from :00 to avoid GitHub Actions top-of-hour queue congestion.
+    # Runs between 02:00 UTC and 17:59 UTC (7:30 AM to 11:30 PM IST = 16 hrs/day).
+    - cron: '7,21,35,49 2-17 * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/keep_alive.yml'
   workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
 
 jobs:
   keep-alive:
     name: Ping Squire Way Health Endpoint
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Ping Server
+      - name: Ping Server (with Cold-Start Retries)
         run: |
-          echo "Pinging https://squire-way-app.onrender.com/healthz..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://squire-way-app.onrender.com/healthz)
-          echo "HTTP Response: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" -eq 200 ]; then
-            echo "✅ Server is alive and responsive!"
-          else
-            echo "⚠️ Server returned status code $HTTP_STATUS"
-            exit 1
-          fi
+          URL="https://squire-way-app.onrender.com/healthz"
+          echo "Pinging $URL..."
+          MAX_ATTEMPTS=4
+          HTTP_STATUS="000"
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            HTTP_STATUS=$(curl -sS -o /tmp/healthz.json -w "%{http_code}" --connect-timeout 15 --max-time 75 "$URL" || true)
+            HTTP_STATUS="${HTTP_STATUS:-000}"
+            echo "Attempt $i/$MAX_ATTEMPTS -> HTTP $HTTP_STATUS"
+            if [ "$HTTP_STATUS" = "200" ]; then
+              cat /tmp/healthz.json || true
+              echo ""
+              echo "✅ Server is alive and responsive!"
+              exit 0
+            fi
+            if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+              echo "⏳ Server may be cold-starting (status $HTTP_STATUS); retrying in 12s..."
+              sleep 12
+            fi
+          done
+          echo "❌ Server failed after $MAX_ATTEMPTS attempts (last HTTP status: $HTTP_STATUS)"
+          exit 1
