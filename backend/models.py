@@ -21,6 +21,9 @@ class QuestionResponse(BaseModel):
     review_reason: str = ""
     frequency: int = 1
     sources: List[str] = []
+    updated_by_name: str = ""
+    approved_by_name: str = ""
+    approved_at: str = ""
     created_at: str
     updated_at: str
 
@@ -168,8 +171,44 @@ class UserResponse(BaseModel):
     display_name: str
     role: str
     is_active: bool = True
+    active_sessions: int = 0
+    last_active_at: Optional[str] = None
     created_at: str
     updated_at: str
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    role: Optional[str] = Field(default=None, description="'admin' or 'teacher'")
+
+
+class UserStatusRequest(BaseModel):
+    is_active: bool
+
+
+class AuditLogEntryResponse(BaseModel):
+    id: int
+    actor_user_id: Optional[int] = None
+    actor_username: str = ""
+    actor_display_name: str = ""
+    actor_role: str = ""
+    category: str
+    action: str
+    entity_type: str = ""
+    entity_id: Optional[int] = None
+    summary: str = ""
+    diff: Optional[dict] = None
+    has_snapshot: bool = False
+    restored: bool = False
+    ip_address: str = ""
+    created_at: str
+
+
+class AuditLogListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: List[AuditLogEntryResponse]
 
 
 class UserLogin(BaseModel):

@@ -200,6 +200,7 @@ const userRoleBadge = document.getElementById('user-role-badge');
 const dropdownUsername = document.getElementById('dropdown-username');
 const dropdownRole = document.getElementById('dropdown-role');
 const btnOpenManageUsers = document.getElementById('btn-open-manage-users');
+const btnOpenAuditLog = document.getElementById('btn-open-audit-log');
 const btnOpenChangePassword = document.getElementById('btn-open-change-password');
 const btnLogout = document.getElementById('btn-logout');
 
@@ -232,9 +233,9 @@ const changePwdMsg = document.getElementById('change-pwd-msg');
 
 // ================= Auth, Session & RBAC Core =================
 
-// 15-Minute Inactivity Auto-Lock
+// 24-Hour Inactivity Auto-Lock (aligned with DB rolling session expiry)
 let inactivityTimer = null;
-const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+const INACTIVITY_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 function resetInactivityTimer() {
     if (inactivityTimer) clearTimeout(inactivityTimer);
@@ -254,7 +255,7 @@ function setupInactivityListeners() {
 
 async function handleInactivityLogout() {
     await performLogout(false);
-    showAuthOverlay("Session locked after 15 minutes of inactivity. Please sign in again.");
+    showAuthOverlay("Session locked after 24 hours of inactivity. Please sign in again.");
 }
 
 function getPageCacheKey(page, limit, filters) {
@@ -723,7 +724,22 @@ window.copyQuestionText = async function(id) {
     }
 };
 
-// User Management Modal Handlers
+// User Management & Audit Log Modal Handlers
+let adminUsersCache = [];
+const auditState = {
+    page: 1,
+    pageSize: 30,
+    total: 0,
+    totalPages: 1
+};
+
+function formatShortDateTime(isoStr) {
+    if (!isoStr) return 'Never';
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return String(isoStr);
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 async function openUserMgmtModal() {
     if (state.currentUser?.role !== 'admin') return;
     if (createUserMsg) createUserMsg.classList.add('hidden');
@@ -741,47 +757,79 @@ window.closeUserMgmtModal = closeUserMgmtModal;
 
 async function loadUsersList() {
     if (!userMgmtTableBody) return;
-    userMgmtTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Loading registered accounts...</td></tr>`;
+    userMgmtTableBody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-400">Loading registered accounts...</td></tr>`;
     try {
         const res = await apiFetch('/api/admin/users');
         if (!res.ok) throw new Error("Failed to load users");
         const users = await res.json();
+        adminUsersCache = users;
 
         userMgmtTableBody.innerHTML = users.map(u => {
-            const isSelf = state.currentUser && state.currentUser.id === u.id;
+            const isSelf = state.currentUser && (state.currentUser.id === u.id || state.currentUser.user_id === u.id);
             const isAdmin = u.role === 'admin';
+            const isActive = u.is_active !== false;
             const createdDate = u.created_at ? String(u.created_at).split(/[T ]/)[0] : '-';
+            const activeSess = Number(u.active_sessions || 0);
+            const lastAct = u.last_active_at ? formatShortDateTime(u.last_active_at) : 'No active session';
             return `
-                <tr class="hover:bg-slate-50 transition-colors">
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors ${!isActive ? 'opacity-70 bg-rose-50/30 dark:bg-rose-950/10' : ''}">
                     <td class="p-3">
-                        <div class="font-bold text-slate-800">${escapeHtml(u.display_name)}</div>
-                        <div class="text-[11px] text-slate-400">@${escapeHtml(u.username)}</div>
+                        <div class="font-bold text-slate-800 dark:text-slate-100">${escapeHtml(u.display_name)}</div>
+                        <div class="text-[11px] text-slate-400">@${escapeHtml(u.username)} • Created <span>${escapeHtml(createdDate)}</span></div>
                     </td>
                     <td class="p-3">
                         <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            isAdmin ? 'bg-amber-100 text-amber-800' : 'bg-brand-100 text-brand-800'
+                            isAdmin ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300' : 'bg-brand-100 dark:bg-brand-900/40 text-brand-800 dark:text-brand-300'
                         }">
                             ${isAdmin ? '👑 Admin' : '🎓 Teacher'}
                         </span>
                     </td>
-                    <td class="p-3 text-slate-500">${createdDate}</td>
-                    <td class="p-3 text-right space-x-1.5 whitespace-nowrap">
-                        <button type="button" data-user-action="reset-password" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer">
-                            Reset Pass
-                        </button>
-                        ${!isSelf ? `
-                            <button type="button" data-user-action="delete" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 cursor-pointer">
-                                Delete
+                    <td class="p-3">
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            isActive ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300'
+                        }">
+                            ${isActive ? '● Active' : '⛔ Suspended'}
+                        </span>
+                    </td>
+                    <td class="p-3 text-[11px] text-slate-500 dark:text-slate-400">
+                        <div class="font-semibold text-slate-700 dark:text-slate-200">${activeSess} active session${activeSess === 1 ? '' : 's'}</div>
+                        <div class="text-[10px] text-slate-400">Last: ${escapeHtml(lastAct)}</div>
+                    </td>
+                    <td class="p-3 text-right">
+                        <div class="inline-flex flex-wrap justify-end gap-1">
+                            <button type="button" data-user-action="edit" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" data-display-name="${escapeHtml(u.display_name)}" data-role="${escapeHtml(u.role)}" class="px-2 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 cursor-pointer" title="Edit name & role">
+                                ✏️ Edit
                             </button>
-                        ` : `
-                            <span class="text-[10px] text-slate-400 italic">You</span>
-                        `}
+                            <button type="button" data-user-action="reset-password" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 cursor-pointer" title="Reset password">
+                                🔐 Pass
+                            </button>
+                            <button type="button" data-user-action="activity" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2 py-1 rounded-lg text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-800 dark:text-amber-300 border border-amber-200/70 dark:border-amber-800/60 cursor-pointer" title="View audit activity">
+                                📜 Activity
+                            </button>
+                            ${activeSess > 0 && !isSelf ? `
+                                <button type="button" data-user-action="force-logout" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/60 cursor-pointer" title="Force sign out all sessions">
+                                    ⏏️ Sign Out
+                                </button>
+                            ` : ''}
+                            ${!isSelf ? `
+                                <button type="button" data-user-action="toggle-status" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" data-active="${isActive ? '1' : '0'}" class="px-2 py-1 rounded-lg text-[11px] font-semibold ${
+                                    isActive
+                                        ? 'bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                        : 'bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                } cursor-pointer">
+                                    ${isActive ? '⏸️ Suspend' : '▶️ Activate'}
+                                </button>
+                                <button type="button" data-user-action="delete" data-user-id="${u.id}" data-username="${escapeHtml(u.username)}" class="px-2 py-1 rounded-lg text-[11px] font-semibold bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-800 cursor-pointer">
+                                    🗑️ Delete
+                                </button>
+                            ` : `<span class="px-2 py-1 text-[10px] text-slate-400 italic self-center">You</span>`}
+                        </div>
                     </td>
                 </tr>
             `;
         }).join('');
     } catch (err) {
-        userMgmtTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-600">Error loading users: ${escapeHtml(err.message)}</td></tr>`;
+        userMgmtTableBody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-rose-600">Error loading users: ${escapeHtml(err.message)}</td></tr>`;
     }
 }
 
@@ -821,11 +869,92 @@ async function handleCreateUserSubmit(e) {
     }
 }
 
-window.handleResetUserPasswordPrompt = async function(userId, username) {
-    const newPass = prompt(`Enter new password for @${username} (min 4 characters):`);
-    if (!newPass) return;
+function openEditUserModal(userId, username, displayName, role) {
+    const modal = document.getElementById('edit-user-modal');
+    if (!modal) return;
+    document.getElementById('edit-user-id').value = userId;
+    document.getElementById('edit-user-subtitle').textContent = `@${username}`;
+    document.getElementById('edit-user-displayname').value = displayName || '';
+    document.getElementById('edit-user-role').value = role || 'teacher';
+    const msg = document.getElementById('edit-user-msg');
+    if (msg) msg.classList.add('hidden');
+    modal.classList.remove('hidden');
+}
+
+function closeEditUserModal() {
+    document.getElementById('edit-user-modal')?.classList.add('hidden');
+}
+
+async function handleEditUserSubmit(e) {
+    e.preventDefault();
+    const userId = parseInt(document.getElementById('edit-user-id')?.value || '0', 10);
+    const displayName = document.getElementById('edit-user-displayname')?.value.trim();
+    const role = document.getElementById('edit-user-role')?.value;
+    const msg = document.getElementById('edit-user-msg');
+    if (!userId || !displayName) return;
+
+    try {
+        const res = await apiFetch(`/api/admin/users/${userId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_name: displayName, role })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to update account');
+        }
+        closeEditUserModal();
+        showToast("Account updated successfully", "success");
+        await loadUsersList();
+    } catch (err) {
+        if (msg) {
+            msg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+            msg.textContent = err.message;
+        }
+    }
+}
+
+function openResetUserPwdModal(userId, username) {
+    const modal = document.getElementById('reset-user-pwd-modal');
+    if (!modal) return;
+    document.getElementById('reset-pwd-user-id').value = userId;
+    document.getElementById('reset-user-pwd-subtitle').textContent = `@${username}`;
+    const newInp = document.getElementById('reset-pwd-new-input');
+    const confInp = document.getElementById('reset-pwd-confirm-input');
+    if (newInp) {
+        newInp.value = '';
+        newInp.type = 'password';
+    }
+    if (confInp) confInp.value = '';
+    const msg = document.getElementById('reset-pwd-msg');
+    if (msg) msg.classList.add('hidden');
+    modal.classList.remove('hidden');
+    setTimeout(() => newInp?.focus(), 60);
+}
+
+function closeResetUserPwdModal() {
+    document.getElementById('reset-user-pwd-modal')?.classList.add('hidden');
+}
+
+async function handleResetUserPwdSubmit(e) {
+    e.preventDefault();
+    const userId = parseInt(document.getElementById('reset-pwd-user-id')?.value || '0', 10);
+    const newPass = document.getElementById('reset-pwd-new-input')?.value || '';
+    const confirmPass = document.getElementById('reset-pwd-confirm-input')?.value || '';
+    const msg = document.getElementById('reset-pwd-msg');
+
     if (newPass.length < 4) {
-        showToast("Password must be at least 4 characters long.", "warning");
+        if (msg) {
+            msg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+            msg.textContent = 'Password must be at least 4 characters.';
+        }
+        return;
+    }
+    if (newPass !== confirmPass) {
+        if (msg) {
+            msg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+            msg.textContent = 'Passwords do not match.';
+        }
         return;
     }
 
@@ -836,14 +965,55 @@ window.handleResetUserPasswordPrompt = async function(userId, username) {
             body: JSON.stringify({ new_password: newPass })
         });
         if (!res.ok) {
-            const err = await res.json();
+            const err = await res.json().catch(() => ({}));
             throw new Error(err.detail || 'Failed to reset password');
         }
-        showToast(`Password for @${username} has been reset successfully!`, "success");
+        closeResetUserPwdModal();
+        showToast("Password reset & active sessions cleared", "success");
+        await loadUsersList();
     } catch (err) {
-        showToast("Error resetting password: " + err.message, "error");
+        if (msg) {
+            msg.className = 'text-xs p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 block';
+            msg.textContent = err.message;
+        }
     }
-};
+}
+
+async function handleToggleUserStatus(userId, username, currentlyActive) {
+    const nextActive = !currentlyActive;
+    const verb = nextActive ? 'reactivate' : 'suspend';
+    if (!confirm(`Are you sure you want to ${verb} account @${username}?`)) return;
+    try {
+        const res = await apiFetch(`/api/admin/users/${userId}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: nextActive })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `Failed to ${verb} user`);
+        }
+        showToast(`Account @${username} ${nextActive ? 'reactivated' : 'suspended'}`, nextActive ? "success" : "warning");
+        await loadUsersList();
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+async function handleForceLogoutUser(userId, username) {
+    if (!confirm(`Force sign-out all active sessions for @${username}?`)) return;
+    try {
+        const res = await apiFetch(`/api/admin/users/${userId}/force-logout`, { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to sign out user');
+        }
+        showToast(`Signed out all sessions for @${username}`, "info");
+        await loadUsersList();
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
 
 window.handleDeleteUser = async function(userId, username) {
     if (!confirm(`Are you sure you want to permanently delete account @${username}?`)) return;
@@ -860,6 +1030,192 @@ window.handleDeleteUser = async function(userId, username) {
         showToast("Error deleting user: " + err.message, "error");
     }
 };
+
+// Audit Log Modal Handlers
+async function openAuditLogModal(filterUserId = '') {
+    if (state.currentUser?.role !== 'admin') return;
+    if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+    const modal = document.getElementById('audit-log-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    if (adminUsersCache.length === 0) {
+        try {
+            const ur = await apiFetch('/api/admin/users');
+            if (ur.ok) adminUsersCache = await ur.json();
+        } catch (e) {}
+    }
+    const userSel = document.getElementById('audit-user-filter');
+    if (userSel) {
+        const currentVal = filterUserId ? String(filterUserId) : (userSel.value || '');
+        userSel.innerHTML = `<option value="">All Users</option>` + adminUsersCache.map(u =>
+            `<option value="${u.id}">${escapeHtml(u.display_name)} (@${escapeHtml(u.username)})</option>`
+        ).join('');
+        userSel.value = currentVal;
+    }
+
+    auditState.page = 1;
+    await loadAuditLogs();
+}
+
+function closeAuditLogModal() {
+    document.getElementById('audit-log-modal')?.classList.add('hidden');
+}
+
+function renderAuditDiffBlock(diff) {
+    if (!diff || typeof diff !== 'object') return '';
+    if (diff.before && diff.after) {
+        const keys = Array.from(new Set([...Object.keys(diff.before), ...Object.keys(diff.after)]));
+        const rows = keys.map(k => {
+            const bv = diff.before[k] == null || diff.before[k] === '' ? '(empty)' : String(diff.before[k]);
+            const av = diff.after[k] == null || diff.after[k] === '' ? '(empty)' : String(diff.after[k]);
+            return `
+                <div class="grid grid-cols-12 gap-2 py-1 border-b border-slate-100 dark:border-slate-800 last:border-b-0 text-[11px]">
+                    <span class="col-span-3 font-bold text-slate-600 dark:text-slate-300">${escapeHtml(k)}</span>
+                    <span class="col-span-4 text-rose-700 dark:text-rose-400 break-words line-through">${escapeHtml(bv)}</span>
+                    <span class="col-span-5 text-emerald-700 dark:text-emerald-400 break-words">${escapeHtml(av)}</span>
+                </div>
+            `;
+        }).join('');
+        return `
+            <details class="mt-2 bg-slate-50 dark:bg-slate-900/60 rounded-lg border border-slate-200/80 dark:border-slate-700/80 px-3 py-1.5">
+                <summary class="text-[11px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer select-none">View Field Changes (${keys.length})</summary>
+                <div class="mt-1.5 space-y-0.5">${rows}</div>
+            </details>
+        `;
+    }
+    return `
+        <details class="mt-2 bg-slate-50 dark:bg-slate-900/60 rounded-lg border border-slate-200/80 dark:border-slate-700/80 px-3 py-1.5">
+            <summary class="text-[11px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer select-none">View Details</summary>
+            <pre class="mt-1.5 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">${escapeHtml(JSON.stringify(diff, null, 2))}</pre>
+        </details>
+    `;
+}
+
+async function loadAuditLogs() {
+    const container = document.getElementById('audit-logs-container');
+    if (!container) return;
+    container.innerHTML = `<div class="text-center text-slate-400 text-xs py-8">Loading audit history...</div>`;
+
+    const params = new URLSearchParams();
+    params.set('page', String(auditState.page));
+    params.set('page_size', String(auditState.pageSize));
+    const q = document.getElementById('audit-search-input')?.value.trim();
+    const cat = document.getElementById('audit-category-filter')?.value;
+    const uid = document.getElementById('audit-user-filter')?.value;
+    if (q) params.set('q', q);
+    if (cat) params.set('category', cat);
+    if (uid) params.set('actor_user_id', uid);
+
+    try {
+        const res = await apiFetch(`/api/admin/audit-logs?${params.toString()}`);
+        if (!res.ok) throw new Error('Failed to load audit logs');
+        const data = await res.json();
+        auditState.total = data.total || 0;
+        auditState.totalPages = Math.max(1, Math.ceil(auditState.total / auditState.pageSize));
+
+        const infoEl = document.getElementById('audit-pagination-info');
+        const pageEl = document.getElementById('audit-page-indicator');
+        const prevBtn = document.getElementById('audit-prev-btn');
+        const nextBtn = document.getElementById('audit-next-btn');
+        if (infoEl) infoEl.textContent = `${auditState.total} event${auditState.total === 1 ? '' : 's'}`;
+        if (pageEl) pageEl.textContent = `${auditState.page} / ${auditState.totalPages}`;
+        if (prevBtn) prevBtn.disabled = auditState.page <= 1;
+        if (nextBtn) nextBtn.disabled = auditState.page >= auditState.totalPages;
+
+        if (!data.items || data.items.length === 0) {
+            container.innerHTML = `<div class="text-center text-slate-400 text-xs py-10">No matching audit log events found.</div>`;
+            return;
+        }
+
+        container.innerHTML = data.items.map(item => {
+            const act = item.action || '';
+            let badgeCls = 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200';
+            if (act.includes('delete') || act.includes('suspend') || act.includes('failed') || act.includes('blocked')) {
+                badgeCls = 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300';
+            } else if (act.includes('approve') || act.includes('restore') || act.includes('create') || act.includes('reactivate')) {
+                badgeCls = 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300';
+            } else if (act.includes('update') || act.includes('grade') || act.includes('deadline')) {
+                badgeCls = 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300';
+            } else if (act.includes('merge') || act.includes('curate') || act.includes('reset')) {
+                badgeCls = 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300';
+            }
+
+            const canRestore = item.has_snapshot && (act === 'question.delete' || act === 'question.bulk_delete');
+            const actorText = item.actor_username ? `@${item.actor_username}` : (item.actor_display_name || 'System');
+            return `
+                <div class="p-3.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800/70 space-y-1.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${badgeCls}">${escapeHtml(act)}</span>
+                            <span class="text-xs font-bold text-slate-800 dark:text-slate-100">${escapeHtml(item.actor_display_name || actorText)}</span>
+                            <span class="text-[11px] text-slate-400">${escapeHtml(actorText)}</span>
+                            ${item.ip_address ? `<span class="text-[10px] text-slate-400 font-mono">(${escapeHtml(item.ip_address)})</span>` : ''}
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            ${canRestore ? (
+                                item.restored
+                                    ? `<span class="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">✓ Restored</span>`
+                                    : `<button type="button" data-audit-restore="${item.id}" class="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs cursor-pointer">♻️ Restore Question</button>`
+                            ) : ''}
+                            <span class="text-[11px] text-slate-400">${escapeHtml(formatShortDateTime(item.created_at))}</span>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-700 dark:text-slate-200 font-medium">${escapeHtml(item.summary)}</p>
+                    ${renderAuditDiffBlock(item.diff)}
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        container.innerHTML = `<div class="text-center text-rose-600 text-xs py-8">Error loading audit logs: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+async function handleAuditRestore(logId) {
+    if (!confirm("Restore deleted question(s) from this audit record back into the Question Library?")) return;
+    try {
+        const res = await apiFetch(`/api/admin/audit-logs/${logId}/restore`, { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Restore failed');
+        }
+        const data = await res.json();
+        showToast(data.message || "Question restored!", "success");
+        clearPageCache();
+        await loadMetadata();
+        await loadQuestions(true);
+        await loadAuditLogs();
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+async function handleExportAuditCsv() {
+    const params = new URLSearchParams();
+    const q = document.getElementById('audit-search-input')?.value.trim();
+    const cat = document.getElementById('audit-category-filter')?.value;
+    const uid = document.getElementById('audit-user-filter')?.value;
+    if (q) params.set('q', q);
+    if (cat) params.set('category', cat);
+    if (uid) params.set('actor_user_id', uid);
+
+    try {
+        const res = await apiFetch(`/api/admin/audit-logs/export?${params.toString()}`);
+        if (!res.ok) throw new Error('Failed to export CSV');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `audit_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        showToast("Audit Log CSV downloaded", "success");
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
 
 // Change Password Modal Handlers
 function openChangePasswordModal() {
@@ -1357,6 +1713,17 @@ function setupEventListeners() {
             openUserMgmtModal();
         });
     }
+    if (btnOpenAuditLog) {
+        btnOpenAuditLog.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (userDropdownMenu) userDropdownMenu.classList.add('hidden');
+            openAuditLogModal();
+        });
+    }
+    document.getElementById('btn-users-open-audit')?.addEventListener('click', () => {
+        closeUserMgmtModal();
+        openAuditLogModal();
+    });
     if (btnOpenChangePassword) {
         btnOpenChangePassword.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1383,13 +1750,75 @@ function setupEventListeners() {
             const userId = parseInt(btn.dataset.userId || '0', 10);
             const username = btn.dataset.username || '';
             if (!userId) return;
-            if (action === 'reset-password') {
-                window.handleResetUserPasswordPrompt(userId, username);
+            if (action === 'edit') {
+                openEditUserModal(userId, username, btn.dataset.displayName || '', btn.dataset.role || 'teacher');
+            } else if (action === 'reset-password') {
+                openResetUserPwdModal(userId, username);
+            } else if (action === 'toggle-status') {
+                handleToggleUserStatus(userId, username, btn.dataset.active === '1');
+            } else if (action === 'force-logout') {
+                handleForceLogoutUser(userId, username);
+            } else if (action === 'activity') {
+                closeUserMgmtModal();
+                openAuditLogModal(userId);
             } else if (action === 'delete') {
                 window.handleDeleteUser(userId, username);
             }
         });
     }
+
+    // Edit User & Masked Reset Password Modal Listeners
+    document.getElementById('close-edit-user-btn')?.addEventListener('click', closeEditUserModal);
+    document.getElementById('cancel-edit-user-btn')?.addEventListener('click', closeEditUserModal);
+    document.getElementById('edit-user-form')?.addEventListener('submit', handleEditUserSubmit);
+    document.getElementById('close-reset-user-pwd-btn')?.addEventListener('click', closeResetUserPwdModal);
+    document.getElementById('cancel-reset-user-pwd-btn')?.addEventListener('click', closeResetUserPwdModal);
+    document.getElementById('reset-user-pwd-form')?.addEventListener('submit', handleResetUserPwdSubmit);
+    document.getElementById('btn-toggle-reset-pwd')?.addEventListener('click', () => {
+        const inp = document.getElementById('reset-pwd-new-input');
+        const conf = document.getElementById('reset-pwd-confirm-input');
+        if (inp) inp.type = inp.type === 'password' ? 'text' : 'password';
+        if (conf) conf.type = inp ? inp.type : 'password';
+    });
+
+    // Audit Log Modal Listeners
+    document.getElementById('close-audit-log-btn')?.addEventListener('click', closeAuditLogModal);
+    document.getElementById('btn-refresh-audit-logs')?.addEventListener('click', () => loadAuditLogs());
+    document.getElementById('btn-export-audit-csv')?.addEventListener('click', handleExportAuditCsv);
+    document.getElementById('audit-category-filter')?.addEventListener('change', () => {
+        auditState.page = 1;
+        loadAuditLogs();
+    });
+    document.getElementById('audit-user-filter')?.addEventListener('change', () => {
+        auditState.page = 1;
+        loadAuditLogs();
+    });
+    let auditSearchDebounce = null;
+    document.getElementById('audit-search-input')?.addEventListener('input', () => {
+        clearTimeout(auditSearchDebounce);
+        auditSearchDebounce = setTimeout(() => {
+            auditState.page = 1;
+            loadAuditLogs();
+        }, 300);
+    });
+    document.getElementById('audit-prev-btn')?.addEventListener('click', () => {
+        if (auditState.page > 1) {
+            auditState.page--;
+            loadAuditLogs();
+        }
+    });
+    document.getElementById('audit-next-btn')?.addEventListener('click', () => {
+        if (auditState.page < auditState.totalPages) {
+            auditState.page++;
+            loadAuditLogs();
+        }
+    });
+    document.getElementById('audit-logs-container')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-audit-restore]');
+        if (!btn) return;
+        const logId = parseInt(btn.dataset.auditRestore || '0', 10);
+        if (logId) handleAuditRestore(logId);
+    });
 
     // Modal Close Buttons
     if (closeUserMgmtBtn) closeUserMgmtBtn.addEventListener('click', closeUserMgmtModal);
@@ -1406,6 +1835,9 @@ function setupEventListeners() {
         { id: 'extend-deadline-modal', close: closeExtendDeadlineModal },
         { id: 'edit-modal', close: closeEditModal },
         { id: 'add-modal', close: closeAddModal },
+        { id: 'edit-user-modal', close: closeEditUserModal },
+        { id: 'reset-user-pwd-modal', close: closeResetUserPwdModal },
+        { id: 'audit-log-modal', close: closeAuditLogModal },
         { id: 'user-mgmt-modal', close: closeUserMgmtModal },
         { id: 'change-password-modal', close: closeChangePasswordModal },
         { id: 'exam-setup-modal', close: () => document.getElementById('exam-setup-modal')?.classList.add('hidden') },
@@ -1480,6 +1912,21 @@ function setupEventListeners() {
             const examSetup = document.getElementById('exam-setup-modal');
             if (examSetup && !examSetup.classList.contains('hidden')) {
                 examSetup.classList.add('hidden');
+                return;
+            }
+            const resetUserPwdM = document.getElementById('reset-user-pwd-modal');
+            if (resetUserPwdM && !resetUserPwdM.classList.contains('hidden')) {
+                closeResetUserPwdModal();
+                return;
+            }
+            const editUserM = document.getElementById('edit-user-modal');
+            if (editUserM && !editUserM.classList.contains('hidden')) {
+                closeEditUserModal();
+                return;
+            }
+            const auditLogM = document.getElementById('audit-log-modal');
+            if (auditLogM && !auditLogM.classList.contains('hidden')) {
+                closeAuditLogModal();
                 return;
             }
             if (userMgmtModal && !userMgmtModal.classList.contains('hidden')) {
@@ -2290,6 +2737,12 @@ function renderQuestions(data) {
                         <p class="text-sm font-medium text-slate-900 dark:text-slate-100 leading-relaxed pt-1">
                             ${escapeHtml(q.question_text)}
                         </p>
+                        ${(q.updated_by_name || q.approved_by_name) ? `
+                            <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-slate-400 dark:text-slate-500 pt-0.5">
+                                ${q.approved_by_name ? `<span>✓ Approved by ${escapeHtml(q.approved_by_name)}</span>` : ''}
+                                ${q.updated_by_name ? `<span>✏️ Edited by ${escapeHtml(q.updated_by_name)}</span>` : ''}
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
 
@@ -3443,6 +3896,19 @@ window.openEditModal = function(id) {
     if (editMarksInput) editMarksInput.value = q.default_marks != null ? q.default_marks : '';
     if (editNeedsReviewCb) editNeedsReviewCb.checked = Boolean(q.needs_review);
     if (editReviewReasonSpan) editReviewReasonSpan.textContent = q.review_reason || '';
+
+    const attrBar = document.getElementById('edit-attribution-bar');
+    if (attrBar) {
+        const parts = [];
+        if (q.approved_by_name) parts.push(`✓ Approved by ${escapeHtml(q.approved_by_name)}`);
+        if (q.updated_by_name) parts.push(`✏️ Last edited by ${escapeHtml(q.updated_by_name)}`);
+        if (parts.length > 0) {
+            attrBar.innerHTML = parts.map(p => `<span>${p}</span>`).join('');
+            attrBar.classList.remove('hidden');
+        } else {
+            attrBar.classList.add('hidden');
+        }
+    }
 
     editModal.classList.remove('hidden');
 };

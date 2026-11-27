@@ -3,7 +3,7 @@ import re
 import json
 import time
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import sqlite3
 from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
@@ -29,6 +29,29 @@ def _iso_ts(val) -> str:
     if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$", s):
         return s.replace(" ", "T") + "+00:00"
     return s
+
+
+def _parse_utc_dt(val) -> Optional[datetime]:
+    """Parses a DB timestamp/string into an aware UTC datetime for safe cross-DB comparisons."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.replace(tzinfo=timezone.utc) if val.tzinfo is None else val.astimezone(timezone.utc)
+    s = str(val).strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    except Exception:
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+        return None
 
 
 class Database:
@@ -330,6 +353,67 @@ class Database:
                 );
                 """)
             
+            if self.is_postgres:
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    token_hash VARCHAR(64) PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    ip_address VARCHAR(64) DEFAULT '',
+                    user_agent TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL
+                );
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id SERIAL PRIMARY KEY,
+                    actor_user_id INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+                    actor_username VARCHAR(100) NOT NULL DEFAULT '',
+                    actor_display_name VARCHAR(150) NOT NULL DEFAULT '',
+                    actor_role VARCHAR(20) NOT NULL DEFAULT '',
+                    category VARCHAR(50) NOT NULL,
+                    action VARCHAR(80) NOT NULL,
+                    entity_type VARCHAR(50) DEFAULT '',
+                    entity_id INTEGER DEFAULT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    diff_json TEXT DEFAULT '',
+                    snapshot_json TEXT DEFAULT '',
+                    ip_address VARCHAR(64) DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+            else:
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    token_hash VARCHAR(64) PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    ip_address VARCHAR(64) DEFAULT '',
+                    user_agent TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL
+                );
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    actor_user_id INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+                    actor_username VARCHAR(100) NOT NULL DEFAULT '',
+                    actor_display_name VARCHAR(150) NOT NULL DEFAULT '',
+                    actor_role VARCHAR(20) NOT NULL DEFAULT '',
+                    category VARCHAR(50) NOT NULL,
+                    action VARCHAR(80) NOT NULL,
+                    entity_type VARCHAR(50) DEFAULT '',
+                    entity_id INTEGER DEFAULT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    diff_json TEXT DEFAULT '',
+                    snapshot_json TEXT DEFAULT '',
+                    ip_address VARCHAR(64) DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_normalized ON questions(normalized_text);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic);")
@@ -354,6 +438,11 @@ class Database:
                 cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS default_marks REAL DEFAULT NULL;")
                 cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS needs_review BOOLEAN DEFAULT FALSE;")
                 cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS review_reason TEXT DEFAULT '';")
+                cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_by INTEGER DEFAULT NULL;")
+                cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_by_name VARCHAR(150) DEFAULT '';")
+                cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS approved_by INTEGER DEFAULT NULL;")
+                cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS approved_by_name VARCHAR(150) DEFAULT '';")
+                cursor.execute("ALTER TABLE questions ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP DEFAULT NULL;")
                 cursor.execute("ALTER TABLE exams ADD COLUMN IF NOT EXISTS class_level VARCHAR(100) DEFAULT '';")
                 cursor.execute("ALTER TABLE exams ADD COLUMN IF NOT EXISTS institute_name VARCHAR(200) DEFAULT 'The Squire''s Way';")
                 cursor.execute("ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS section_title VARCHAR(200) DEFAULT '';")
@@ -372,6 +461,16 @@ class Database:
                     cursor.execute("ALTER TABLE questions ADD COLUMN needs_review BOOLEAN DEFAULT 0;")
                 if "review_reason" not in q_cols:
                     cursor.execute("ALTER TABLE questions ADD COLUMN review_reason TEXT DEFAULT '';")
+                if "updated_by" not in q_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN updated_by INTEGER DEFAULT NULL;")
+                if "updated_by_name" not in q_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN updated_by_name VARCHAR(150) DEFAULT '';")
+                if "approved_by" not in q_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN approved_by INTEGER DEFAULT NULL;")
+                if "approved_by_name" not in q_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN approved_by_name VARCHAR(150) DEFAULT '';")
+                if "approved_at" not in q_cols:
+                    cursor.execute("ALTER TABLE questions ADD COLUMN approved_at TIMESTAMP DEFAULT NULL;")
 
                 cursor.execute("PRAGMA table_info(exams);")
                 e_cols = [r[1] for r in cursor.fetchall()]
@@ -389,6 +488,12 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_type ON questions(question_type);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_questions_needs_review ON questions(needs_review);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_category ON audit_logs(category);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);")
 
             # Resilient schema migration: emergency submission tracking
             try:
@@ -416,6 +521,25 @@ class Database:
             return set(r.keys())
         return set()
 
+    @staticmethod
+    def _actor_label(actor: Optional[Dict[str, Any]]) -> Tuple[Optional[int], str]:
+        if not isinstance(actor, dict):
+            return None, ""
+        uid = actor.get("user_id") or actor.get("id")
+        try:
+            uid_int = int(uid) if uid is not None else None
+        except (TypeError, ValueError):
+            uid_int = None
+        uname = (actor.get("username") or "").strip()
+        dname = (actor.get("display_name") or "").strip()
+        if dname and uname and dname.lower() != uname.lower():
+            label = f"{dname} (@{uname})"
+        elif uname:
+            label = f"@{uname}"
+        else:
+            label = dname
+        return uid_int, label
+
     def _row_to_question_dict(self, r, include_normalized: bool = False) -> Dict[str, Any]:
         try:
             srcs = json.loads(r["sources"]) if r["sources"] else []
@@ -441,6 +565,9 @@ class Database:
             "review_reason": _get("review_reason") or "",
             "frequency": r["frequency"] or 1,
             "sources": srcs,
+            "updated_by_name": _get("updated_by_name") or "",
+            "approved_by_name": _get("approved_by_name") or "",
+            "approved_at": _iso_ts(_get("approved_at")),
             "created_at": _iso_ts(r["created_at"]),
             "updated_at": _iso_ts(r["updated_at"]),
         }
@@ -490,11 +617,13 @@ class Database:
         default_marks: Optional[float] = None,
         needs_review: bool = False,
         review_reason: str = "",
+        actor: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, bool]:
         """
         Inserts a new question or merges if exact normalized match exists.
         Returns: (question_id, is_merged)
         """
+        actor_id, actor_label = self._actor_label(actor)
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
             query = self._format_query(
@@ -525,7 +654,8 @@ class Database:
                 new_nr = existing_nr
                 new_reason = row["review_reason"] or ""
 
-                update_query = self._format_query("""
+                extra_actor = ", updated_by = ?, updated_by_name = ?" if actor_label else ""
+                update_query = self._format_query(f"""
                     UPDATE questions
                     SET frequency = ?,
                         sources = ?,
@@ -538,24 +668,25 @@ class Database:
                         needs_review = ?,
                         review_reason = ?,
                         updated_at = CURRENT_TIMESTAMP
+                        {extra_actor}
                     WHERE id = ?
                 """)
-                cursor.execute(
-                    update_query,
-                    (
-                        current_freq + 1,
-                        json.dumps(sources_list),
-                        new_subject,
-                        new_topic,
-                        new_class,
-                        new_type,
-                        new_diff,
-                        new_marks,
-                        self._bool_val(new_nr),
-                        new_reason,
-                        question_id,
-                    ),
-                )
+                upd_params: List[Any] = [
+                    current_freq + 1,
+                    json.dumps(sources_list),
+                    new_subject,
+                    new_topic,
+                    new_class,
+                    new_type,
+                    new_diff,
+                    new_marks,
+                    self._bool_val(new_nr),
+                    new_reason,
+                ]
+                if actor_label:
+                    upd_params.extend([actor_id, actor_label])
+                upd_params.append(question_id)
+                cursor.execute(update_query, upd_params)
                 conn.commit()
                 self.invalidate_metadata_cache()
                 return question_id, True
@@ -565,9 +696,9 @@ class Database:
                     INSERT INTO questions (
                         question_text, normalized_text, class_level, subject, topic,
                         question_type, difficulty, default_marks, needs_review, review_reason,
-                        frequency, sources
+                        frequency, sources, updated_by, updated_by_name
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                     RETURNING id
                 """)
                 cursor.execute(
@@ -584,6 +715,8 @@ class Database:
                         self._bool_val(needs_review),
                         review_reason,
                         json.dumps(sources_list),
+                        actor_id,
+                        actor_label,
                     ),
                 )
                 inserted_id = cursor.fetchone()[0]
@@ -671,7 +804,8 @@ class Database:
             offset = max(0, (page - 1) * limit)
             select_query = self._format_query(f"""
                 SELECT id, question_text, class_level, subject, topic, question_type, difficulty,
-                       default_marks, needs_review, review_reason, frequency, sources, created_at, updated_at
+                       default_marks, needs_review, review_reason, frequency, sources,
+                       updated_by_name, approved_by_name, approved_at, created_at, updated_at
                 FROM questions
                 WHERE {where_clause}
                 ORDER BY {order_by}
@@ -697,7 +831,8 @@ class Database:
             placeholders = ",".join("?" for _ in question_ids)
             query = self._format_query(f"""
                 SELECT id, question_text, class_level, subject, topic, question_type, difficulty,
-                       default_marks, needs_review, review_reason, frequency, sources, created_at, updated_at
+                       default_marks, needs_review, review_reason, frequency, sources,
+                       updated_by_name, approved_by_name, approved_at, created_at, updated_at
                 FROM questions
                 WHERE id IN ({placeholders})
             """)
@@ -725,7 +860,9 @@ class Database:
         clear_default_marks: bool = False,
         needs_review: Optional[bool] = None,
         review_reason: Optional[str] = None,
+        actor: Optional[Dict[str, Any]] = None,
     ) -> bool:
+        actor_id, actor_label = self._actor_label(actor)
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
 
@@ -737,6 +874,12 @@ class Database:
                     raise ValueError(
                         f"A question with identical normalized text already exists (#{dup_row['id']}). Use Merge Duplicates to combine them."
                     )
+
+            cursor.execute(self._format_query("SELECT needs_review FROM questions WHERE id = ?"), (question_id,))
+            curr_row = cursor.fetchone()
+            if not curr_row:
+                return False
+            was_needs_review = bool(curr_row["needs_review"])
 
             updates = ["updated_at = CURRENT_TIMESTAMP"]
             params: List[Any] = []
@@ -773,9 +916,18 @@ class Database:
                 if not needs_review and review_reason is None:
                     updates.append("review_reason = ?")
                     params.append("")
+                if not needs_review and was_needs_review and actor_label:
+                    updates.extend(["approved_by = ?", "approved_by_name = ?", "approved_at = CURRENT_TIMESTAMP"])
+                    params.extend([actor_id, actor_label])
+                elif needs_review:
+                    updates.extend(["approved_by = NULL", "approved_by_name = ''", "approved_at = NULL"])
             if review_reason is not None:
                 updates.append("review_reason = ?")
                 params.append(review_reason)
+
+            if actor_label:
+                updates.extend(["updated_by = ?", "updated_by_name = ?"])
+                params.extend([actor_id, actor_label])
 
             params.append(question_id)
             query = self._format_query(f"UPDATE questions SET {', '.join(updates)} WHERE id = ?")
@@ -797,9 +949,11 @@ class Database:
         default_marks: Optional[float] = None,
         needs_review: Optional[bool] = None,
         review_reason: Optional[str] = None,
+        actor: Optional[Dict[str, Any]] = None,
     ) -> int:
         if not question_ids:
             return 0
+        actor_id, actor_label = self._actor_label(actor)
         updates = ["updated_at = CURRENT_TIMESTAMP"]
         params: List[Any] = []
 
@@ -827,12 +981,21 @@ class Database:
             if not needs_review and review_reason is None:
                 updates.append("review_reason = ?")
                 params.append("")
+            if not needs_review and actor_label:
+                updates.extend(["approved_by = ?", "approved_by_name = ?", "approved_at = CURRENT_TIMESTAMP"])
+                params.extend([actor_id, actor_label])
+            elif needs_review:
+                updates.extend(["approved_by = NULL", "approved_by_name = ''", "approved_at = NULL"])
         if review_reason is not None:
             updates.append("review_reason = ?")
             params.append(review_reason)
 
         if len(updates) == 1:
             return 0
+
+        if actor_label:
+            updates.extend(["updated_by = ?", "updated_by_name = ?"])
+            params.extend([actor_id, actor_label])
 
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
@@ -851,6 +1014,7 @@ class Database:
         source_ids: List[int],
         merged_text: Optional[str] = None,
         merged_normalized_text: Optional[str] = None,
+        actor: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Merges one or more duplicate question records (`source_ids`) into `target_id`.
@@ -948,6 +1112,7 @@ class Database:
             if other_dup:
                 raise ValueError(f"Merged text matches another existing question (#{other_dup['id']}). Include #{other_dup['id']} in the merge.")
 
+            actor_id, actor_label = self._actor_label(actor)
             upd_q = self._format_query("""
                 UPDATE questions
                 SET question_text = ?,
@@ -962,6 +1127,11 @@ class Database:
                     review_reason = ?,
                     frequency = ?,
                     sources = ?,
+                    updated_by = COALESCE(?, updated_by),
+                    updated_by_name = CASE WHEN ? != '' THEN ? ELSE updated_by_name END,
+                    approved_by = COALESCE(?, approved_by),
+                    approved_by_name = CASE WHEN ? != '' THEN ? ELSE approved_by_name END,
+                    approved_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """)
@@ -980,6 +1150,12 @@ class Database:
                     "",
                     total_freq,
                     json.dumps(merged_src_list),
+                    actor_id,
+                    actor_label,
+                    actor_label,
+                    actor_id,
+                    actor_label,
+                    actor_label,
                     target_id,
                 ),
             )
@@ -1125,7 +1301,8 @@ class Database:
             order_sql = "frequency DESC, updated_at DESC, id ASC" if prefer_most_repeated else "updated_at DESC, id DESC"
             query = self._format_query(f"""
                 SELECT id, question_text, class_level, subject, topic, question_type, difficulty,
-                       default_marks, needs_review, review_reason, frequency, sources, created_at, updated_at
+                       default_marks, needs_review, review_reason, frequency, sources,
+                       updated_by_name, approved_by_name, approved_at, created_at, updated_at
                 FROM questions
                 WHERE {where_clause}
                 ORDER BY {order_sql}
@@ -1203,6 +1380,70 @@ class Database:
             if count > 0:
                 self.invalidate_metadata_cache()
             return count
+
+    def restore_deleted_question(
+        self,
+        snapshot: Dict[str, Any],
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Restores a deleted question from an audit snapshot, preserving frequency, sources & tags."""
+        from backend.services.dedup import clean_question_text, normalize_question_text
+
+        q_text = clean_question_text(snapshot.get("question_text") or "")
+        if not q_text:
+            raise ValueError("Deleted snapshot has empty question_text.")
+        norm_text = (snapshot.get("normalized_text") or "").strip() or normalize_question_text(q_text)
+        actor_id, actor_label = self._actor_label(actor)
+        srcs = snapshot.get("sources") if isinstance(snapshot.get("sources"), list) else []
+        freq = max(1, int(snapshot.get("frequency") or 1))
+        def_marks = snapshot.get("default_marks")
+        def_marks = float(def_marks) if def_marks is not None else None
+        needs_rev = bool(snapshot.get("needs_review", False))
+        rev_reason = (snapshot.get("review_reason") or "").strip()
+
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(self._format_query("SELECT id FROM questions WHERE normalized_text = ?"), (norm_text,))
+            existing = cursor.fetchone()
+            if existing:
+                qid = existing["id"]
+                merged = True
+            else:
+                insert_q = self._format_query("""
+                    INSERT INTO questions (
+                        question_text, normalized_text, class_level, subject, topic,
+                        question_type, difficulty, default_marks, needs_review, review_reason,
+                        frequency, sources, updated_by, updated_by_name
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                """)
+                cursor.execute(
+                    insert_q,
+                    (
+                        q_text,
+                        norm_text,
+                        (snapshot.get("class_level") or "").strip(),
+                        (snapshot.get("subject") or "").strip(),
+                        (snapshot.get("topic") or "").strip(),
+                        (snapshot.get("question_type") or "").strip(),
+                        (snapshot.get("difficulty") or "").strip(),
+                        def_marks,
+                        self._bool_val(needs_rev),
+                        rev_reason,
+                        freq,
+                        json.dumps(srcs),
+                        actor_id,
+                        actor_label,
+                    ),
+                )
+                qid = cursor.fetchone()[0]
+                conn.commit()
+                self.invalidate_metadata_cache()
+                merged = False
+
+        restored_list = self.get_questions_by_ids([qid])
+        return {"question": restored_list[0] if restored_list else None, "already_existed": merged}
 
     def get_metadata(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Returns distinct classes, subjects, topics, types, difficulties, and sources with stats."""
@@ -1489,12 +1730,31 @@ class Database:
             }
 
     def list_users(self) -> List[Dict[str, Any]]:
-        """Lists all registered users (excluding sensitive password hashes)."""
+        """Lists all registered users with live active session counts and last activity timestamp."""
+        now_utc = datetime.now(timezone.utc)
         with self.get_connection() as conn:
             cursor = self._get_cursor(conn)
             query = "SELECT id, username, display_name, role, is_active, created_at, updated_at FROM users ORDER BY id ASC"
             cursor.execute(query)
             rows = cursor.fetchall()
+
+            session_stats: Dict[int, Dict[str, Any]] = {}
+            try:
+                cursor.execute("SELECT user_id, last_active_at, expires_at FROM user_sessions")
+                for sr in cursor.fetchall():
+                    exp_dt = _parse_utc_dt(sr["expires_at"])
+                    if exp_dt is None or exp_dt <= now_utc:
+                        continue
+                    uid = int(sr["user_id"])
+                    entry = session_stats.setdefault(uid, {"count": 0, "last_active_dt": None, "last_active_raw": None})
+                    entry["count"] += 1
+                    la_dt = _parse_utc_dt(sr["last_active_at"])
+                    if la_dt and (entry["last_active_dt"] is None or la_dt > entry["last_active_dt"]):
+                        entry["last_active_dt"] = la_dt
+                        entry["last_active_raw"] = sr["last_active_at"]
+            except Exception:
+                pass
+
             return [
                 {
                     "id": r["id"],
@@ -1502,11 +1762,75 @@ class Database:
                     "display_name": r["display_name"],
                     "role": r["role"],
                     "is_active": bool(r["is_active"]),
-                    "created_at": str(r["created_at"]),
-                    "updated_at": str(r["updated_at"])
+                    "active_sessions": session_stats.get(int(r["id"]), {}).get("count", 0),
+                    "last_active_at": _iso_ts(session_stats.get(int(r["id"]), {}).get("last_active_raw")) or None,
+                    "created_at": _iso_ts(r["created_at"]),
+                    "updated_at": _iso_ts(r["updated_at"]),
                 }
                 for r in rows
             ]
+
+    def update_user_profile(
+        self,
+        user_id: int,
+        display_name: Optional[str] = None,
+        role: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Updates a user's display name and/or role."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if display_name is not None:
+            clean_name = display_name.strip()
+            if not clean_name:
+                raise ValueError("Display name cannot be empty.")
+            updates.append("display_name = ?")
+            params.append(clean_name)
+        if role is not None:
+            clean_role = role.strip().lower()
+            if clean_role not in ("admin", "teacher"):
+                raise ValueError("Role must be 'admin' or 'teacher'.")
+            updates.append("role = ?")
+            params.append(clean_role)
+        if len(updates) == 1:
+            return self.get_user_by_id(user_id)
+
+        params.append(user_id)
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(
+                self._format_query(f"UPDATE users SET {', '.join(updates)} WHERE id = ?"),
+                params,
+            )
+            conn.commit()
+            if cursor.rowcount <= 0:
+                return None
+        return self.get_user_by_id(user_id)
+
+    def set_user_active(self, user_id: int, is_active: bool) -> Optional[Dict[str, Any]]:
+        """Activates or suspends a user account without erasing historical records."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(
+                self._format_query("UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
+                (self._bool_val(is_active), user_id),
+            )
+            conn.commit()
+            if cursor.rowcount <= 0:
+                return None
+        return self.get_user_by_id(user_id)
+
+    def count_active_admins(self) -> int:
+        """Counts active administrator accounts."""
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            q = (
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = TRUE"
+                if self.is_postgres
+                else "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1"
+            )
+            cursor.execute(q)
+            res = cursor.fetchone()
+            return int(res[0]) if res else 0
 
     def update_user_password(self, user_id: int, password_hash: str, salt: str) -> bool:
         """Updates user password hash and salt."""
@@ -1537,6 +1861,303 @@ class Database:
             cursor.execute("SELECT COUNT(*) FROM users")
             res = cursor.fetchone()
             return res[0] if res else 0
+
+    # ================= Persistent DB Session Management =================
+
+    def create_session_record(
+        self,
+        token_hash: str,
+        user_id: int,
+        ttl_seconds: int = 86400,
+        ip_address: str = "",
+        user_agent: str = "",
+    ) -> None:
+        now_dt = datetime.now(timezone.utc)
+        exp_dt = now_dt + timedelta(seconds=ttl_seconds)
+        now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        exp_str = exp_dt.strftime("%Y-%m-%d %H:%M:%S")
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            if self.is_postgres:
+                cursor.execute(
+                    """
+                    INSERT INTO user_sessions (token_hash, user_id, ip_address, user_agent, created_at, last_active_at, expires_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (token_hash) DO UPDATE SET
+                        last_active_at = EXCLUDED.last_active_at,
+                        expires_at = EXCLUDED.expires_at
+                    """,
+                    (token_hash, user_id, ip_address[:64], user_agent[:300], now_str, now_str, exp_str),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO user_sessions (token_hash, user_id, ip_address, user_agent, created_at, last_active_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (token_hash, user_id, ip_address[:64], user_agent[:300], now_str, now_str, exp_str),
+                )
+            conn.commit()
+
+    def get_session_record(self, token_hash: str, extend_seconds: int = 86400) -> Optional[Dict[str, Any]]:
+        """Loads an active DB session, enforces user.is_active + expiry, and slides expiry forward."""
+        now_dt = datetime.now(timezone.utc)
+        now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        new_exp_str = (now_dt + timedelta(seconds=extend_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            q = self._format_query("""
+                SELECT s.token_hash, s.user_id, s.created_at, s.last_active_at, s.expires_at,
+                       u.username, u.display_name, u.role, u.is_active
+                FROM user_sessions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.token_hash = ?
+            """)
+            cursor.execute(q, (token_hash,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            exp_dt = _parse_utc_dt(row["expires_at"])
+            is_active = bool(row["is_active"])
+            if not is_active or exp_dt is None or exp_dt <= now_dt:
+                cursor.execute(self._format_query("DELETE FROM user_sessions WHERE token_hash = ?"), (token_hash,))
+                conn.commit()
+                return None
+
+            cursor.execute(
+                self._format_query("UPDATE user_sessions SET last_active_at = ?, expires_at = ? WHERE token_hash = ?"),
+                (now_str, new_exp_str, token_hash),
+            )
+            conn.commit()
+            return {
+                "user_id": int(row["user_id"]),
+                "username": row["username"],
+                "display_name": row["display_name"],
+                "role": row["role"],
+                "is_active": True,
+                "created_at": _iso_ts(row["created_at"]),
+                "last_active": now_dt.timestamp(),
+            }
+
+    def delete_session_by_hash(self, token_hash: str) -> bool:
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(self._format_query("DELETE FROM user_sessions WHERE token_hash = ?"), (token_hash,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_sessions_for_user(self, user_id: int, exclude_token_hash: Optional[str] = None) -> int:
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            if exclude_token_hash:
+                cursor.execute(
+                    self._format_query("DELETE FROM user_sessions WHERE user_id = ? AND token_hash != ?"),
+                    (user_id, exclude_token_hash),
+                )
+            else:
+                cursor.execute(self._format_query("DELETE FROM user_sessions WHERE user_id = ?"), (user_id,))
+            conn.commit()
+            return cursor.rowcount
+
+    def delete_all_sessions(self) -> int:
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute("DELETE FROM user_sessions")
+            conn.commit()
+            return cursor.rowcount
+
+    # ================= Comprehensive Audit Log =================
+
+    def insert_audit_log(
+        self,
+        category: str,
+        action: str,
+        summary: str,
+        actor: Optional[Dict[str, Any]] = None,
+        entity_type: str = "",
+        entity_id: Optional[int] = None,
+        diff: Optional[Dict[str, Any]] = None,
+        snapshot: Optional[Dict[str, Any]] = None,
+        ip_address: str = "",
+    ) -> int:
+        actor_uid = None
+        actor_username = ""
+        actor_display = ""
+        actor_role = ""
+        if isinstance(actor, dict):
+            raw_uid = actor.get("user_id") or actor.get("id")
+            try:
+                actor_uid = int(raw_uid) if raw_uid is not None else None
+            except (TypeError, ValueError):
+                actor_uid = None
+            actor_username = (actor.get("username") or "").strip()[:100]
+            actor_display = (actor.get("display_name") or actor_username).strip()[:150]
+            actor_role = (actor.get("role") or "").strip()[:20]
+
+        diff_str = json.dumps(diff, ensure_ascii=False) if diff else ""
+        snap_str = json.dumps(snapshot, ensure_ascii=False) if snapshot else ""
+
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            valid_uid = None
+            if actor_uid is not None:
+                cursor.execute(self._format_query("SELECT id FROM users WHERE id = ?"), (actor_uid,))
+                if cursor.fetchone():
+                    valid_uid = actor_uid
+
+            q = self._format_query("""
+                INSERT INTO audit_logs (
+                    actor_user_id, actor_username, actor_display_name, actor_role,
+                    category, action, entity_type, entity_id,
+                    summary, diff_json, snapshot_json, ip_address
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+            """)
+            cursor.execute(
+                q,
+                (
+                    valid_uid,
+                    actor_username,
+                    actor_display,
+                    actor_role,
+                    category.strip()[:50],
+                    action.strip()[:80],
+                    (entity_type or "").strip()[:50],
+                    entity_id,
+                    (summary or "").strip(),
+                    diff_str,
+                    snap_str,
+                    (ip_address or "").strip()[:64],
+                ),
+            )
+            log_id = cursor.fetchone()[0]
+            conn.commit()
+            return int(log_id)
+
+    def _row_to_audit_dict(self, r, include_snapshot: bool = False) -> Dict[str, Any]:
+        diff_parsed = None
+        if r["diff_json"]:
+            try:
+                diff_parsed = json.loads(r["diff_json"])
+            except Exception:
+                diff_parsed = None
+        has_snap = bool(r["snapshot_json"])
+        restored_flag = bool(isinstance(diff_parsed, dict) and diff_parsed.get("restored"))
+        item = {
+            "id": r["id"],
+            "actor_user_id": r["actor_user_id"],
+            "actor_username": r["actor_username"] or "",
+            "actor_display_name": r["actor_display_name"] or "",
+            "actor_role": r["actor_role"] or "",
+            "category": r["category"],
+            "action": r["action"],
+            "entity_type": r["entity_type"] or "",
+            "entity_id": r["entity_id"],
+            "summary": r["summary"] or "",
+            "diff": diff_parsed,
+            "has_snapshot": has_snap,
+            "restored": restored_flag,
+            "ip_address": r["ip_address"] or "",
+            "created_at": _iso_ts(r["created_at"]),
+        }
+        if include_snapshot and r["snapshot_json"]:
+            try:
+                item["snapshot"] = json.loads(r["snapshot_json"])
+            except Exception:
+                item["snapshot"] = None
+        return item
+
+    def query_audit_logs(
+        self,
+        category: Optional[str] = None,
+        actor_user_id: Optional[int] = None,
+        action: Optional[str] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Dict[str, Any]:
+        parts = ["1=1"]
+        params: List[Any] = []
+        if category and category.strip():
+            parts.append("LOWER(category) = LOWER(?)")
+            params.append(category.strip())
+        if actor_user_id is not None:
+            parts.append("actor_user_id = ?")
+            params.append(int(actor_user_id))
+        if action and action.strip():
+            parts.append("LOWER(action) = LOWER(?)")
+            params.append(action.strip())
+        if search and search.strip():
+            like_op = "ILIKE" if self.is_postgres else "LIKE"
+            parts.append(f"(summary {like_op} ? OR actor_username {like_op} ? OR actor_display_name {like_op} ? OR action {like_op} ?)")
+            sp = f"%{search.strip()}%"
+            params.extend([sp, sp, sp, sp])
+
+        where_sql = " AND ".join(parts)
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(self._format_query(f"SELECT COUNT(*) FROM audit_logs WHERE {where_sql}"), params)
+            total = int(cursor.fetchone()[0])
+
+            offset = max(0, (page - 1) * page_size)
+            cursor.execute(
+                self._format_query(f"""
+                    SELECT id, actor_user_id, actor_username, actor_display_name, actor_role,
+                           category, action, entity_type, entity_id, summary, diff_json,
+                           snapshot_json, ip_address, created_at
+                    FROM audit_logs
+                    WHERE {where_sql}
+                    ORDER BY id DESC
+                    LIMIT ? OFFSET ?
+                """),
+                params + [page_size, offset],
+            )
+            rows = cursor.fetchall()
+            return {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "items": [self._row_to_audit_dict(r, include_snapshot=False) for r in rows],
+            }
+
+    def get_audit_log_by_id(self, log_id: int) -> Optional[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(
+                self._format_query("""
+                    SELECT id, actor_user_id, actor_username, actor_display_name, actor_role,
+                           category, action, entity_type, entity_id, summary, diff_json,
+                           snapshot_json, ip_address, created_at
+                    FROM audit_logs
+                    WHERE id = ?
+                """),
+                (log_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_audit_dict(row, include_snapshot=True) if row else None
+
+    def mark_audit_log_restored(self, log_id: int, restored_question_id: int) -> None:
+        with self.get_connection() as conn:
+            cursor = self._get_cursor(conn)
+            cursor.execute(self._format_query("SELECT diff_json FROM audit_logs WHERE id = ?"), (log_id,))
+            row = cursor.fetchone()
+            if not row:
+                return
+            try:
+                diff_obj = json.loads(row["diff_json"]) if row["diff_json"] else {}
+            except Exception:
+                diff_obj = {}
+            if not isinstance(diff_obj, dict):
+                diff_obj = {}
+            diff_obj["restored"] = True
+            diff_obj["restored_question_id"] = restored_question_id
+            cursor.execute(
+                self._format_query("UPDATE audit_logs SET diff_json = ? WHERE id = ?"),
+                (json.dumps(diff_obj, ensure_ascii=False), log_id),
+            )
+            conn.commit()
 
     # ==========================================
     # Digital Exams & Evaluation Studio Methods

@@ -854,7 +854,7 @@ def test_frontend_delegation_state_sync_and_hygiene():
     app_js = open(os.path.join(root, "static", "app.js"), encoding="utf-8").read()
     exam_js = open(os.path.join(root, "static", "exam.js"), encoding="utf-8").read()
 
-    assert "/static/app.js?v=3.7.3" in index_html
+    assert "/static/app.js?v=3.8.0" in index_html
     assert "/static/style.css?v=3.7.3" in index_html
     assert "/static/exam.js?v=3.7.3" in exam_html
     assert "/static/style.css?v=3.7.3" in exam_html
@@ -1164,27 +1164,29 @@ vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), examSandbox);
     });
     assert.strictEqual(fbInp.value, 'Well explained');
 
-    // 1c. Test loadUsersList emits data-user-action without inline onclick, parses SQLite timestamps, and handles apostrophe/backslash username
-    let capturedResetArgs = null;
+    // 1c. Test loadUsersList emits data-user-action without inline onclick, parses SQLite timestamps, and opens masked reset modal
     vm.runInContext(`
         state.currentUser = { id: 1, role: 'admin', username: 'admin' };
         apiFetch = async (u) => u === '/api/admin/users' ? ({
             ok: true,
-            json: async () => ([{ id: 2, username: "o'brien\\\\t", display_name: "O'Brien", role: 'teacher', created_at: '2026-11-25 14:23:10' }])
+            json: async () => ([{ id: 2, username: "o'brien\\\\t", display_name: "O'Brien", role: 'teacher', is_active: true, active_sessions: 1, created_at: '2026-11-25 14:23:10' }])
         }) : ({ ok: true, json: async () => ({}) });
     `, sandbox);
-    sandbox.handleResetUserPasswordPrompt = (uid, uname) => { capturedResetArgs = [uid, uname]; };
     await vm.runInContext(`loadUsersList()`, sandbox);
     const usersHtml = getEl('user-mgmt-table-body').innerHTML;
     assert(!usersHtml.includes('onclick="'), 'loadUsersList must not emit inline onclick');
     assert(usersHtml.includes('data-user-action="reset-password"'));
+    assert(usersHtml.includes('data-user-action="edit"'));
+    assert(usersHtml.includes('data-user-action="toggle-status"'));
     assert(usersHtml.includes('>2026-11-25<'), 'SQLite space-separated created_at must format to YYYY-MM-DD');
     const resetBtn = { dataset: { userAction: 'reset-password', userId: '2', username: "o'brien\\t" } };
     getEl('user-mgmt-table-body').dispatchEvent({
         type: 'click',
         target: { closest: (sel) => sel.includes('data-user-action') ? resetBtn : null }
     });
-    assert.deepStrictEqual(capturedResetArgs, [2, "o'brien\\t"]);
+    assert(!getEl('reset-user-pwd-modal').classList.contains('hidden'), 'Reset password click must open masked modal');
+    assert.strictEqual(getEl('reset-pwd-user-id').value, 2);
+    assert.strictEqual(getEl('reset-user-pwd-subtitle').textContent, "@o'brien\\t");
 
     // 2. Test openExamSetupModal resets stale instructions cleanly
     vm.runInContext(`

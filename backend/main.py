@@ -36,6 +36,9 @@ from backend.models import (
     UserLogin,
     TokenResponse,
     UserCreate,
+    UserUpdateRequest,
+    UserStatusRequest,
+    AuditLogListResponse,
     ChangePasswordRequest,
     ResetPasswordRequest,
     ExamCreateRequest,
@@ -66,6 +69,7 @@ from backend.services.security import (
 DB_PATH = os.environ.get("DATABASE_URL") or os.environ.get("QUESTION_BANK_DB", "questions.db")
 db = Database(DB_PATH)
 ensure_admin_user(db)
+session_manager.bind_database(lambda: db)
 
 # Legacy master passcode setting (kept for optional backward-compatibility)
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
@@ -257,11 +261,81 @@ def auth_status(request: Request):
 
     return {"protected": True, "authenticated": False, "user": None}
 
+def _extract_bearer_token(request: Request) -> Optional[str]:
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
+    return request.headers.get("x-auth-token") or request.query_params.get("auth_token")
+
+
+def _user_to_response(user: dict) -> UserResponse:
+    return UserResponse(
+        id=user["id"],
+        username=user["username"],
+        display_name=user["display_name"],
+        role=user["role"],
+        is_active=bool(user.get("is_active", True)),
+        active_sessions=int(user.get("active_sessions", 0) or 0),
+        last_active_at=user.get("last_active_at"),
+        created_at=str(user["created_at"]),
+        updated_at=str(user["updated_at"]),
+    )
+
+
+def record_audit(
+    request: Optional[Request],
+    actor: Optional[dict],
+    category: str,
+    action: str,
+    summary: str,
+    entity_type: str = "",
+    entity_id: Optional[int] = None,
+    diff: Optional[dict] = None,
+    snapshot: Optional[dict] = None,
+) -> Optional[int]:
+    """Resilient audit log writer; logs warning on error without interrupting user requests."""
+    try:
+        ip = get_client_ip(request) if request is not None else ""
+        return db.insert_audit_log(
+            category=category,
+            action=action,
+            summary=summary,
+            actor=actor,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            diff=diff,
+            snapshot=snapshot,
+            ip_address=ip,
+        )
+    except Exception as e:
+        print(f"[Warning] Audit log insert failed ({action}): {e}")
+        return None
+
+
+def _compute_question_diff(before: Optional[dict], after: Optional[dict]) -> Optional[dict]:
+    if not before or not after:
+        return None
+    fields = [
+        "question_text", "class_level", "subject", "topic",
+        "question_type", "difficulty", "default_marks",
+        "needs_review", "review_reason",
+    ]
+    before_diff = {}
+    after_diff = {}
+    for f in fields:
+        if before.get(f) != after.get(f):
+            before_diff[f] = before.get(f)
+            after_diff[f] = after.get(f)
+    if not before_diff:
+        return None
+    return {"before": before_diff, "after": after_diff}
+
+
 @app.post("/api/auth/login", response_model=TokenResponse)
 def auth_login(request: Request, payload: UserLogin):
     """
     Authenticates a user with username and password, protected by sliding-window rate limiting.
-    Issues a high-entropy session token upon success.
+    Issues a high-entropy DB-persisted session token upon success.
     """
     client_ip = get_client_ip(request)
 
@@ -279,11 +353,12 @@ def auth_login(request: Request, payload: UserLogin):
 
     # Check credentials (strictly case-sensitive username)
     is_valid = False
+    is_suspended = bool(user and not user.get("is_active"))
     if user and user.get("is_active"):
         if user.get("username") == username_clean:
             is_valid = verify_password(payload.password, user["password_hash"], user["salt"])
-    elif username_clean == "admin" and APP_PASSWORD:
-        # Fallback for admin using APP_PASSWORD if set (strictly lowercase 'admin')
+    elif not user and username_clean == "admin" and APP_PASSWORD:
+        # Emergency fallback for admin using APP_PASSWORD only if no admin DB row exists
         is_valid = secrets.compare_digest(payload.password.encode("utf-8"), APP_PASSWORD.encode("utf-8"))
         if is_valid:
             user = {
@@ -292,11 +367,30 @@ def auth_login(request: Request, payload: UserLogin):
                 "display_name": "Administrator",
                 "role": "admin",
                 "is_active": True,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
 
+    if is_suspended:
+        record_audit(
+            request,
+            {"user_id": user["id"], "username": user["username"], "display_name": user["display_name"], "role": user["role"]},
+            "account",
+            "auth.login_blocked",
+            f"Suspended account @{username_clean} attempted login",
+            entity_type="user",
+            entity_id=user["id"],
+        )
+        raise HTTPException(status_code=403, detail="This account has been suspended by an administrator.")
+
     if not is_valid or not user:
+        record_audit(
+            request,
+            {"username": username_clean, "display_name": username_clean},
+            "account",
+            "auth.login_failed",
+            f"Failed login attempt for username '{username_clean}'",
+        )
         is_locked, lockout_secs = auth_rate_limiter.record_failure(client_ip)
         if is_locked:
             raise HTTPException(
@@ -308,31 +402,42 @@ def auth_login(request: Request, payload: UserLogin):
 
     # Successful login
     auth_rate_limiter.record_success(client_ip)
-    token = session_manager.create_session(user)
+    token = session_manager.create_session(
+        user,
+        ip_address=client_ip,
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    record_audit(
+        request,
+        {"user_id": user["id"], "username": user["username"], "display_name": user["display_name"], "role": user["role"]},
+        "account",
+        "auth.login",
+        f"@{user['username']} signed in ({user['role']})",
+        entity_type="user",
+        entity_id=user["id"],
+    )
     return TokenResponse(
         token=token,
-        user=UserResponse(
-            id=user["id"],
-            username=user["username"],
-            display_name=user["display_name"],
-            role=user["role"],
-            is_active=user["is_active"],
-            created_at=str(user["created_at"]),
-            updated_at=str(user["updated_at"])
-        )
+        user=_user_to_response(user),
     )
 
 @app.post("/api/auth/logout")
 def auth_logout(request: Request):
     """Invalidates the caller's session token."""
-    auth_header = request.headers.get("Authorization")
-    token = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-    if not token:
-        token = request.headers.get("x-auth-token")
+    token = _extract_bearer_token(request)
     if token:
+        existing_session = session_manager.get_session(token)
         session_manager.destroy_session(token)
+        if existing_session:
+            record_audit(
+                request,
+                existing_session,
+                "account",
+                "auth.logout",
+                f"@{existing_session.get('username')} signed out",
+                entity_type="user",
+                entity_id=existing_session.get("user_id"),
+            )
     return {"success": True, "message": "Logged out successfully"}
 
 @app.get("/api/auth/me")
@@ -341,8 +446,12 @@ def auth_me(current_user: dict = Depends(get_current_user)):
     return {"user": current_user}
 
 @app.post("/api/auth/change-password")
-def auth_change_password(payload: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
-    """Allows any logged-in user to change their own password."""
+def auth_change_password(
+    request: Request,
+    payload: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Allows any logged-in user to change their own password (revokes other active sessions)."""
     user = db.get_user_by_id(current_user["user_id"])
     if not user:
         raise HTTPException(status_code=404, detail="User account not found.")
@@ -352,29 +461,28 @@ def auth_change_password(payload: ChangePasswordRequest, current_user: dict = De
 
     new_hash, new_salt = hash_password(payload.new_password)
     db.update_user_password(user["id"], new_hash, new_salt)
+    current_token = _extract_bearer_token(request)
+    session_manager.revoke_user_sessions(user["id"], exclude_token=current_token)
+    record_audit(
+        request,
+        current_user,
+        "account",
+        "user.change_password",
+        f"@{user['username']} changed their own password",
+        entity_type="user",
+        entity_id=user["id"],
+    )
     return {"success": True, "message": "Password changed successfully."}
 
 # ================= Admin User Management Endpoints =================
 
 @app.get("/api/admin/users", response_model=List[UserResponse])
 def admin_list_users(admin: dict = Depends(require_admin)):
-    """Lists all registered users in the system (Admin only)."""
-    users = db.list_users()
-    return [
-        UserResponse(
-            id=u["id"],
-            username=u["username"],
-            display_name=u["display_name"],
-            role=u["role"],
-            is_active=u["is_active"],
-            created_at=str(u["created_at"]),
-            updated_at=str(u["updated_at"])
-        )
-        for u in users
-    ]
+    """Lists all registered users in the system with active session counts (Admin only)."""
+    return [_user_to_response(u) for u in db.list_users()]
 
 @app.post("/api/admin/users", response_model=UserResponse)
-def admin_create_user(payload: UserCreate, admin: dict = Depends(require_admin)):
+def admin_create_user(request: Request, payload: UserCreate, admin: dict = Depends(require_admin)):
     """Creates a new user account (Admin only)."""
     clean_username = payload.username.strip()
     if not clean_username:
@@ -392,29 +500,159 @@ def admin_create_user(payload: UserCreate, admin: dict = Depends(require_admin))
         role=payload.role or "teacher"
     )
     user = db.get_user_by_id(user_id)
-    return UserResponse(
-        id=user["id"],
-        username=user["username"],
-        display_name=user["display_name"],
-        role=user["role"],
-        is_active=user["is_active"],
-        created_at=str(user["created_at"]),
-        updated_at=str(user["updated_at"])
+    record_audit(
+        request,
+        admin,
+        "account",
+        "user.create",
+        f"Created account @{user['username']} ({user['role']})",
+        entity_type="user",
+        entity_id=user["id"],
+        diff={"after": {"username": user["username"], "display_name": user["display_name"], "role": user["role"]}},
     )
+    return _user_to_response(user)
+
+@app.patch("/api/admin/users/{user_id}", response_model=UserResponse)
+def admin_update_user(
+    request: Request,
+    user_id: int,
+    payload: UserUpdateRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Updates a user's display name and/or role (Admin only)."""
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    desired_role = payload.role.strip().lower() if payload.role is not None else None
+    if desired_role is not None and desired_role not in ("admin", "teacher"):
+        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'teacher'.")
+
+    if user_id == admin.get("user_id") and desired_role and desired_role != target["role"]:
+        raise HTTPException(status_code=400, detail="Cannot change your own administrator role.")
+
+    if target["role"] == "admin" and target["is_active"] and desired_role == "teacher":
+        if db.count_active_admins() <= 1:
+            raise HTTPException(status_code=400, detail="Cannot demote the last active administrator.")
+
+    try:
+        updated = db.update_user_profile(
+            user_id,
+            display_name=payload.display_name,
+            role=desired_role,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    before_diff = {}
+    after_diff = {}
+    for field in ("display_name", "role"):
+        if target.get(field) != updated.get(field):
+            before_diff[field] = target.get(field)
+            after_diff[field] = updated.get(field)
+
+    if before_diff:
+        if "role" in after_diff:
+            session_manager.revoke_user_sessions(user_id)
+        record_audit(
+            request,
+            admin,
+            "account",
+            "user.update",
+            f"Updated @{updated['username']} ({', '.join(after_diff.keys())})",
+            entity_type="user",
+            entity_id=user_id,
+            diff={"before": before_diff, "after": after_diff},
+        )
+    return _user_to_response(updated)
+
+@app.patch("/api/admin/users/{user_id}/status", response_model=UserResponse)
+def admin_set_user_status(
+    request: Request,
+    user_id: int,
+    payload: UserStatusRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Suspends or reactivates a user account (Admin only)."""
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if user_id == admin.get("user_id") and not payload.is_active:
+        raise HTTPException(status_code=400, detail="Cannot suspend your own active administrator account.")
+
+    if target["role"] == "admin" and target["is_active"] and not payload.is_active:
+        if db.count_active_admins() <= 1:
+            raise HTTPException(status_code=400, detail="Cannot suspend the last active administrator.")
+
+    updated = db.set_user_active(user_id, payload.is_active)
+    if not payload.is_active:
+        session_manager.revoke_user_sessions(user_id)
+
+    action_name = "user.reactivate" if payload.is_active else "user.suspend"
+    verb = "Reactivated" if payload.is_active else "Suspended"
+    record_audit(
+        request,
+        admin,
+        "account",
+        action_name,
+        f"{verb} account @{updated['username']}",
+        entity_type="user",
+        entity_id=user_id,
+        diff={"before": {"is_active": target["is_active"]}, "after": {"is_active": updated["is_active"]}},
+    )
+    return _user_to_response(updated)
+
+@app.post("/api/admin/users/{user_id}/force-logout")
+def admin_force_logout_user(
+    request: Request,
+    user_id: int,
+    admin: dict = Depends(require_admin),
+):
+    """Revokes all active sessions for a user account (Admin only)."""
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    revoked = session_manager.revoke_user_sessions(user_id)
+    record_audit(
+        request,
+        admin,
+        "account",
+        "user.force_logout",
+        f"Forced sign-out for @{target['username']} ({revoked} session(s) terminated)",
+        entity_type="user",
+        entity_id=user_id,
+    )
+    return {"success": True, "revoked_sessions": revoked, "message": f"Terminated active sessions for @{target['username']}."}
 
 @app.post("/api/admin/users/{user_id}/reset-password")
-def admin_reset_user_password(user_id: int, payload: ResetPasswordRequest, admin: dict = Depends(require_admin)):
-    """Resets a user's password (Admin only)."""
+def admin_reset_user_password(
+    request: Request,
+    user_id: int,
+    payload: ResetPasswordRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Resets a user's password and revokes their active sessions (Admin only)."""
     user = db.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
     pwd_hash, salt = hash_password(payload.new_password)
     db.update_user_password(user_id, pwd_hash, salt)
+    session_manager.revoke_user_sessions(user_id)
+    record_audit(
+        request,
+        admin,
+        "account",
+        "user.reset_password",
+        f"Reset password for @{user['username']}",
+        entity_type="user",
+        entity_id=user_id,
+    )
     return {"success": True, "message": f"Password reset successfully for user '{user['username']}'."}
 
 @app.delete("/api/admin/users/{user_id}")
-def admin_delete_user(user_id: int, admin: dict = Depends(require_admin)):
+def admin_delete_user(request: Request, user_id: int, admin: dict = Depends(require_admin)):
     """Deletes a user account (Admin only; cannot delete own account)."""
     if user_id == admin["user_id"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own active administrator account.")
@@ -423,8 +661,133 @@ def admin_delete_user(user_id: int, admin: dict = Depends(require_admin)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
+    if user["role"] == "admin" and user["is_active"] and db.count_active_admins() <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last active administrator.")
+
+    session_manager.revoke_user_sessions(user_id)
     db.delete_user(user_id)
+    record_audit(
+        request,
+        admin,
+        "account",
+        "user.delete",
+        f"Deleted account @{user['username']} ({user['role']})",
+        entity_type="user",
+        entity_id=user_id,
+        diff={"before": {"username": user["username"], "display_name": user["display_name"], "role": user["role"]}},
+    )
     return {"success": True, "message": f"User '{user['username']}' deleted successfully."}
+
+# ================= Admin Audit Log Endpoints =================
+
+@app.get("/api/admin/audit-logs", response_model=AuditLogListResponse)
+def admin_get_audit_logs(
+    category: Optional[str] = Query(None),
+    actor_user_id: Optional[int] = Query(None),
+    action: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(require_admin),
+):
+    """Returns paginated filterable audit log entries (Admin only)."""
+    return db.query_audit_logs(
+        category=category,
+        actor_user_id=actor_user_id,
+        action=action,
+        search=q,
+        page=page,
+        page_size=page_size,
+    )
+
+@app.get("/api/admin/audit-logs/export")
+def admin_export_audit_logs_csv(
+    category: Optional[str] = Query(None),
+    actor_user_id: Optional[int] = Query(None),
+    action: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    admin: dict = Depends(require_admin),
+):
+    """Exports matching audit log entries as a CSV report (Admin only)."""
+    res = db.query_audit_logs(
+        category=category,
+        actor_user_id=actor_user_id,
+        action=action,
+        search=q,
+        page=1,
+        page_size=5000,
+    )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Timestamp (UTC)", "Actor Username", "Actor Display Name", "Role", "Category", "Action", "Entity Type", "Entity ID", "Summary", "IP Address", "Diff JSON"])
+    for item in res["items"]:
+        writer.writerow([
+            item["id"],
+            _csv_safe_cell(item["created_at"]),
+            _csv_safe_cell(item["actor_username"]),
+            _csv_safe_cell(item["actor_display_name"]),
+            _csv_safe_cell(item["actor_role"]),
+            _csv_safe_cell(item["category"]),
+            _csv_safe_cell(item["action"]),
+            _csv_safe_cell(item["entity_type"]),
+            item["entity_id"] if item["entity_id"] is not None else "",
+            _csv_safe_cell(item["summary"]),
+            _csv_safe_cell(item["ip_address"]),
+            _csv_safe_cell(json.dumps(item["diff"], ensure_ascii=False) if item.get("diff") else ""),
+        ])
+    now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return Response(
+        content=output.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="audit_logs_{now_str}.csv"'},
+    )
+
+@app.post("/api/admin/audit-logs/{log_id}/restore")
+def admin_restore_from_audit_log(
+    request: Request,
+    log_id: int,
+    admin: dict = Depends(require_admin),
+):
+    """1-Click restores deleted question(s) from an audit snapshot (Admin only)."""
+    entry = db.get_audit_log_by_id(log_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Audit log entry not found.")
+    snap = entry.get("snapshot")
+    if entry.get("action") not in ("question.delete", "question.bulk_delete") or not snap:
+        raise HTTPException(status_code=400, detail="This audit entry does not contain a restorable deleted question snapshot.")
+
+    snapshots = snap.get("questions", []) if isinstance(snap, dict) and isinstance(snap.get("questions"), list) else [snap]
+    if not snapshots:
+        raise HTTPException(status_code=400, detail="Snapshot contains no questions to restore.")
+
+    restored_questions = []
+    already_existed_count = 0
+    for q_snap in snapshots:
+        res = db.restore_deleted_question(q_snap, actor=admin)
+        if res.get("question"):
+            restored_questions.append(res["question"])
+        if res.get("already_existed"):
+            already_existed_count += 1
+
+    first_id = restored_questions[0]["id"] if restored_questions else None
+    db.mark_audit_log_restored(log_id, first_id or 0)
+    record_audit(
+        request,
+        admin,
+        "question",
+        "question.restore",
+        f"Restored {len(restored_questions)} deleted question(s) from Audit Log #{log_id}",
+        entity_type="question",
+        entity_id=first_id,
+        diff={"source_audit_id": log_id, "restored_ids": [q["id"] for q in restored_questions]},
+    )
+    return {
+        "success": True,
+        "restored_count": len(restored_questions),
+        "already_existed_count": already_existed_count,
+        "questions": restored_questions,
+        "message": f"Restored {len(restored_questions)} question(s) to the library.",
+    }
 
 @app.post("/api/auth/verify")
 def auth_verify(request: Request, payload: AuthVerifyRequest):
@@ -576,8 +939,12 @@ async def preview_upload_files(
     }
 
 
-@app.post("/api/upload/confirm", response_model=UploadStatsResponse, dependencies=[Depends(verify_auth)])
-def confirm_upload_import(payload: ConfirmImportRequest):
+@app.post("/api/upload/confirm", response_model=UploadStatsResponse)
+def confirm_upload_import(
+    request: Request,
+    payload: ConfirmImportRequest,
+    current_user: dict = Depends(verify_auth),
+):
     """
     Saves teacher-reviewed items from the Pre-Import Preview modal into the Question Library.
     """
@@ -614,6 +981,7 @@ def confirm_upload_import(payload: ConfirmImportRequest):
             default_marks=item.default_marks,
             needs_review=bool(item.needs_review),
             review_reason=(item.review_reason or "").strip(),
+            actor=current_user,
         )
         if is_merged:
             file_stats[src]["duplicates_merged"] += 1
@@ -632,6 +1000,16 @@ def confirm_upload_import(payload: ConfirmImportRequest):
         for fname, st in file_stats.items()
     ]
 
+    record_audit(
+        request,
+        current_user,
+        "question",
+        "question.import_confirm",
+        f"Imported {total_new} new, merged {total_merged} duplicate(s) from {len(file_summaries)} file(s)",
+        entity_type="question",
+        diff={"files": [f.filename for f in file_summaries], "new": total_new, "merged": total_merged},
+    )
+
     return UploadStatsResponse(
         total_files=len(file_summaries),
         total_extracted=total_extracted,
@@ -641,12 +1019,14 @@ def confirm_upload_import(payload: ConfirmImportRequest):
     )
 
 
-@app.post("/api/upload", response_model=UploadStatsResponse, dependencies=[Depends(verify_auth)])
+@app.post("/api/upload", response_model=UploadStatsResponse)
 async def upload_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     subject: str = Form(""),
     topic: str = Form(""),
-    class_level: str = Form("")
+    class_level: str = Form(""),
+    current_user: dict = Depends(verify_auth),
 ):
     """
     Upload one or more .docx or .pdf files directly.
@@ -701,6 +1081,7 @@ async def upload_files(
                 default_marks=it.get("default_marks"),
                 needs_review=bool(it.get("needs_review", False)),
                 review_reason=it.get("review_reason", ""),
+                actor=current_user,
             )
 
             if is_merged:
@@ -718,6 +1099,16 @@ async def upload_files(
             new_added=file_new,
             duplicates_merged=file_merged
         ))
+
+    record_audit(
+        request,
+        current_user,
+        "question",
+        "question.upload",
+        f"Uploaded {len(files)} file(s): {total_new} new, {total_merged} merged",
+        entity_type="question",
+        diff={"files": [f.filename for f in file_summaries], "new": total_new, "merged": total_merged},
+    )
 
     return UploadStatsResponse(
         total_files=len(files),
@@ -758,8 +1149,12 @@ def get_questions(
     )
 
 
-@app.post("/api/questions", dependencies=[Depends(verify_auth)])
-def create_manual_question(payload: QuestionCreate):
+@app.post("/api/questions")
+def create_manual_question(
+    request: Request,
+    payload: QuestionCreate,
+    current_user: dict = Depends(verify_auth),
+):
     """
     Manually add a single question directly without uploading a file.
     Applies exact-match deduplication and frequency tracking.
@@ -793,6 +1188,18 @@ def create_manual_question(payload: QuestionCreate):
         default_marks=payload.default_marks if payload.default_marks is not None else inferred["default_marks"],
         needs_review=bool(payload.needs_review) if payload.needs_review is not None else False,
         review_reason=(payload.review_reason or "").strip(),
+        actor=current_user,
+    )
+
+    snippet = (clean_text[:70] + "...") if len(clean_text) > 70 else clean_text
+    record_audit(
+        request,
+        current_user,
+        "question",
+        "question.create",
+        f"{'Merged duplicate' if is_merged else 'Added'} Q#{qid}: {snippet}",
+        entity_type="question",
+        entity_id=qid,
     )
 
     return {
@@ -815,8 +1222,12 @@ def find_duplicate_questions(
     }
 
 
-@app.post("/api/questions/bulk-update", dependencies=[Depends(verify_auth)])
-def bulk_update_questions(payload: BulkUpdateQuestionsRequest):
+@app.post("/api/questions/bulk-update")
+def bulk_update_questions(
+    request: Request,
+    payload: BulkUpdateQuestionsRequest,
+    current_user: dict = Depends(verify_auth),
+):
     """Bulk updates structured tags/marks/review status for selected questions (Teacher & Admin)."""
     count = db.bulk_update_questions(
         question_ids=payload.question_ids,
@@ -828,15 +1239,43 @@ def bulk_update_questions(payload: BulkUpdateQuestionsRequest):
         default_marks=payload.default_marks,
         needs_review=payload.needs_review,
         review_reason=payload.review_reason,
+        actor=current_user,
     )
+    if count > 0:
+        changed = {
+            k: v for k, v in {
+                "subject": payload.subject,
+                "topic": payload.topic,
+                "class_level": payload.class_level,
+                "question_type": payload.question_type,
+                "difficulty": payload.difficulty,
+                "default_marks": payload.default_marks,
+                "needs_review": payload.needs_review,
+            }.items() if v is not None
+        }
+        action_type = "question.approve" if (payload.needs_review is False and len(changed) == 1) else "question.bulk_update"
+        verb = "Bulk approved" if action_type == "question.approve" else "Bulk updated"
+        record_audit(
+            request,
+            current_user,
+            "question",
+            action_type,
+            f"{verb} {count} question(s) ({', '.join(changed.keys())})",
+            entity_type="question",
+            diff={"question_ids": payload.question_ids[:50], "updated_count": count, "after": changed},
+        )
     return {
         "message": f"Updated {count} question(s) successfully.",
         "updated_count": count,
     }
 
 
-@app.post("/api/questions/merge", dependencies=[Depends(verify_auth)])
-def merge_duplicate_questions(payload: MergeQuestionsRequest):
+@app.post("/api/questions/merge")
+def merge_duplicate_questions(
+    request: Request,
+    payload: MergeQuestionsRequest,
+    current_user: dict = Depends(verify_auth),
+):
     """Merges selected duplicate questions into target_id, preserving combined frequency & sources (Teacher & Admin)."""
     cleaned_merged = None
     norm_merged = None
@@ -852,12 +1291,24 @@ def merge_duplicate_questions(payload: MergeQuestionsRequest):
             source_ids=payload.source_ids,
             merged_text=cleaned_merged,
             merged_normalized_text=norm_merged,
+            actor=current_user,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     if not merged:
         raise HTTPException(status_code=404, detail="Target question not found.")
+
+    record_audit(
+        request,
+        current_user,
+        "question",
+        "question.merge",
+        f"Merged {len(payload.source_ids)} duplicate(s) into Q#{payload.target_id}",
+        entity_type="question",
+        entity_id=payload.target_id,
+        diff={"target_id": payload.target_id, "merged_source_ids": payload.source_ids},
+    )
 
     return {
         "message": f"Merged {len(payload.source_ids)} duplicate(s) into question #{payload.target_id}.",
@@ -890,19 +1341,45 @@ def get_questions_by_ids(req: ExportRequest):
     return db.get_questions_by_ids(req.question_ids)
 
 
-@app.post("/api/questions/bulk-delete", dependencies=[Depends(require_admin)])
-def bulk_delete_questions(payload: BulkDeleteRequest):
-    """Deletes multiple questions by their IDs in a single batch (Admin only)."""
+@app.post("/api/questions/bulk-delete")
+def bulk_delete_questions(
+    request: Request,
+    payload: BulkDeleteRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Deletes multiple questions by their IDs in a single batch and records audit snapshot (Admin only)."""
+    snapshots = db.get_questions_by_ids(payload.question_ids)
     count = db.delete_questions(payload.question_ids)
+    if count > 0:
+        record_audit(
+            request,
+            admin,
+            "question",
+            "question.bulk_delete",
+            f"Bulk deleted {count} question(s)",
+            entity_type="question",
+            diff={"deleted_ids": [q["id"] for q in snapshots], "count": count},
+            snapshot={"questions": snapshots} if snapshots else None,
+        )
     return {
         "message": f"Successfully deleted {count} questions.",
         "deleted_count": count
     }
 
 
-@app.put("/api/questions/{question_id}", dependencies=[Depends(verify_auth)])
-def update_question(question_id: int, payload: QuestionUpdate):
-    """Updates question text and structured metadata (Teacher & Admin)."""
+@app.put("/api/questions/{question_id}")
+def update_question(
+    request: Request,
+    question_id: int,
+    payload: QuestionUpdate,
+    current_user: dict = Depends(verify_auth),
+):
+    """Updates question text and structured metadata with diff audit logging (Teacher & Admin)."""
+    before_list = db.get_questions_by_ids([question_id])
+    before_q = before_list[0] if before_list else None
+    if not before_q:
+        raise HTTPException(status_code=404, detail="Question not found")
+
     norm_text = None
     cleaned_text = None
     if payload.question_text is not None:
@@ -925,21 +1402,63 @@ def update_question(question_id: int, payload: QuestionUpdate):
             clear_default_marks=bool(payload.clear_default_marks),
             needs_review=payload.needs_review,
             review_reason=payload.review_reason.strip() if payload.review_reason is not None else None,
+            actor=current_user,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     if not success:
         raise HTTPException(status_code=404, detail="Question not found")
+
+    after_list = db.get_questions_by_ids([question_id])
+    after_q = after_list[0] if after_list else None
+    diff_obj = _compute_question_diff(before_q, after_q)
+    was_approved = bool(before_q.get("needs_review") and after_q and not after_q.get("needs_review"))
+    action_type = "question.approve" if was_approved else "question.update"
+    snippet_src = (after_q or before_q).get("question_text", "")
+    snippet = (snippet_src[:65] + "...") if len(snippet_src) > 65 else snippet_src
+    if diff_obj or was_approved:
+        changed_cols = ", ".join((diff_obj or {}).get("after", {}).keys()) or "needs_review"
+        verb = "Approved" if was_approved else "Edited"
+        record_audit(
+            request,
+            current_user,
+            "question",
+            action_type,
+            f"{verb} Q#{question_id} ({changed_cols}): {snippet}",
+            entity_type="question",
+            entity_id=question_id,
+            diff=diff_obj,
+        )
     return {"message": "Question updated successfully"}
 
 
-@app.delete("/api/questions/{question_id}", dependencies=[Depends(require_admin)])
-def delete_question(question_id: int):
-    """Deletes a question from the library (Admin only)."""
+@app.delete("/api/questions/{question_id}")
+def delete_question(
+    request: Request,
+    question_id: int,
+    admin: dict = Depends(require_admin),
+):
+    """Deletes a question from the library and saves full recovery snapshot to Audit Log (Admin only)."""
+    existing_list = db.get_questions_by_ids([question_id])
+    snapshot_q = existing_list[0] if existing_list else None
     success = db.delete_question(question_id)
     if not success:
         raise HTTPException(status_code=404, detail="Question not found")
+
+    q_text = (snapshot_q or {}).get("question_text", "")
+    snippet = (q_text[:70] + "...") if len(q_text) > 70 else q_text
+    record_audit(
+        request,
+        admin,
+        "question",
+        "question.delete",
+        f"Deleted Q#{question_id}: {snippet}",
+        entity_type="question",
+        entity_id=question_id,
+        diff={"before": {"subject": (snapshot_q or {}).get("subject", ""), "topic": (snapshot_q or {}).get("topic", ""), "class_level": (snapshot_q or {}).get("class_level", "")}},
+        snapshot=snapshot_q,
+    )
     return {"message": "Question deleted successfully"}
 
 
@@ -949,10 +1468,26 @@ def preview_smart_curation():
     return curate_question_library(db, dry_run=True, create_backup=False)
 
 
-@app.post("/api/admin/curate/run", dependencies=[Depends(require_admin)])
-def run_smart_curation():
+@app.post("/api/admin/curate/run")
+def run_smart_curation(request: Request, admin: dict = Depends(require_admin)):
     """Creates backup and runs Automated Smart Curation across the active database (Admin only)."""
-    return curate_question_library(db, dry_run=False, create_backup=True)
+    report = curate_question_library(db, dry_run=False, create_backup=True)
+    record_audit(
+        request,
+        admin,
+        "question",
+        "library.curate",
+        f"Ran Smart Curate: {report.get('before_count', 0)} -> {report.get('after_count', 0)} questions ({report.get('duplicates_merged', 0)} merged, {report.get('dividers_dropped', 0)} dividers dropped)",
+        entity_type="library",
+        diff={
+            "before_count": report.get("before_count"),
+            "after_count": report.get("after_count"),
+            "duplicates_merged": report.get("duplicates_merged"),
+            "dividers_dropped": report.get("dividers_dropped"),
+            "needs_review_count": report.get("needs_review_count"),
+        },
+    )
+    return report
 
 
 @app.get("/api/metadata")
@@ -1203,6 +1738,16 @@ def create_exam(
 
     exam["exam_url"] = exam_url
     exam["qr_svg"] = qr_svg
+    record_audit(
+        request,
+        current_user,
+        "exam",
+        "exam.create",
+        f"Created exam '{exam['title']}' ({exam['exam_code']}, {exam.get('questions_count', len(questions_data))} Qs)",
+        entity_type="exam",
+        entity_id=exam["id"],
+        diff={"exam_code": exam["exam_code"], "total_marks": exam["total_marks"], "deadline": exam["deadline"]},
+    )
     return exam
 
 
@@ -1558,6 +2103,7 @@ def get_submission_detail(sub_id: int, current_user: dict = Depends(verify_auth)
 
 @app.post("/api/submissions/{sub_id}/grade")
 def grade_submission(
+    request: Request,
     sub_id: int,
     payload: GradeSubmissionRequest,
     current_user: dict = Depends(verify_auth)
@@ -1584,6 +2130,17 @@ def grade_submission(
         graded_by=graded_by_id
     )
 
+    record_audit(
+        request,
+        current_user,
+        "exam",
+        "submission.grade",
+        f"Graded submission #{sub_id} for {sub.get('student_name', '')} ({sub.get('roll_number', '')}) -> {updated.get('total_score')}/{updated.get('total_marks')}",
+        entity_type="submission",
+        entity_id=sub_id,
+        diff={"before": {"status": sub.get("status"), "total_score": sub.get("total_score")}, "after": {"status": "graded", "total_score": updated.get("total_score")}},
+    )
+
     return {
         "message": "Grade and evaluation published successfully.",
         "submission": updated
@@ -1592,6 +2149,7 @@ def grade_submission(
 
 @app.patch("/api/exams/{id}/deadline")
 def extend_exam_deadline(
+    request: Request,
     id: int,
     payload: ExamDeadlineUpdateRequest,
     current_user: dict = Depends(verify_auth)
@@ -1602,6 +2160,7 @@ def extend_exam_deadline(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid deadline format: {e}")
 
+    before_exam = db.get_exam_by_id(id, include_questions=False)
     updated = db.extend_exam_deadline(
         exam_id=id,
         new_deadline=payload.deadline,
@@ -1610,6 +2169,20 @@ def extend_exam_deadline(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Exam not found.")
+
+    record_audit(
+        request,
+        current_user,
+        "exam",
+        "exam.extend_deadline",
+        f"Updated deadline for '{updated['title']}' ({updated['exam_code']})",
+        entity_type="exam",
+        entity_id=id,
+        diff={
+            "before": {"deadline": (before_exam or {}).get("deadline"), "status": (before_exam or {}).get("status")},
+            "after": {"deadline": updated.get("deadline"), "status": updated.get("status")},
+        },
+    )
 
     return {
         "message": "Exam deadline updated successfully.",
@@ -1649,11 +2222,21 @@ def update_exam_status(id: int, payload: dict, current_user: dict = Depends(veri
 
 
 @app.delete("/api/exams/{id}")
-def delete_exam(id: int, current_user: dict = Depends(require_admin)):
+def delete_exam(request: Request, id: int, current_user: dict = Depends(require_admin)):
     """Deletes an exam and cascades deletion to questions and submissions (Admin only)."""
+    existing = db.get_exam_by_id(id, include_questions=False)
     deleted = db.delete_exam(id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Exam not found.")
+    record_audit(
+        request,
+        current_user,
+        "exam",
+        "exam.delete",
+        f"Deleted exam '{(existing or {}).get('title', id)}' ({(existing or {}).get('exam_code', '')})",
+        entity_type="exam",
+        entity_id=id,
+    )
     return {
         "id": id,
         "message": "Exam deleted successfully."
